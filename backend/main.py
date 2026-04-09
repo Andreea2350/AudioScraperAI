@@ -228,3 +228,36 @@ async def get_istoric():
     except Exception as e:
         print(f"Eroare la preluarea istoricului din Supabase: {e}")
         return {"status": "error", "message": str(e)}
+
+    # --- NOI ENDPOINT-URI PENTRU MENIUL CARDURILOR ---
+
+class CerereRedenumire(BaseModel):
+    titlu_nou: str
+
+@app.put("/redenumeste/{carte_id}")
+async def redenumeste_carte(carte_id: int, cerere: CerereRedenumire):
+    try:
+        supabase.table("carti").update({"titlu": cerere.titlu_nou}).eq("id", carte_id).execute()
+        return {"status": "success", "mesaj": "Titlu actualizat"}
+    except Exception as e:
+        return {"status": "error", "mesaj": str(e)}
+
+@app.delete("/sterge/{carte_id}")
+async def sterge_carte(carte_id: int):
+    try:
+        #iau datele cartii ca sa aflu linkul audio
+        raspuns = supabase.table("carti").select("audio_link").eq("id", carte_id).execute()
+
+        if len(raspuns.data) > 0:
+            link_audio = raspuns.data[0]["audio_link"]
+            #extrag doar numele fisierului din link/partea de la final
+            nume_fisier = link_audio.split("/")[-1]
+
+            #sterg fisierul fizic din Cloud/Storage ca sa eliberez spatiu
+            supabase.storage.from_("audio-books").remove([nume_fisier])
+
+        #sterg randul din baza de date
+        supabase.table("carti").delete().eq("id", carte_id).execute()
+        return {"status": "success", "mesaj": "Carte și fișier șterse"}
+    except Exception as e:
+        return {"status": "error", "mesaj": str(e)}

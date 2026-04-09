@@ -15,15 +15,26 @@ export default function Home() {
     const [istoricCarti, setIstoricCarti] = useState<any[]>([]);
     const [carteaCurenta, setCarteaCurenta] = useState<any>(null);
 
-    //ascultatori ptr comunicarea cu meniul lateral---
+    //state-uri pentru meniul cardurilor de carti
+    const [meniuDeschisId, setMeniuDeschisId] = useState<number | null>(null);
+    const [modalRedenumire, setModalRedenumire] = useState(false);
+    const [carteDeRedenumit, setCarteDeRedenumit] = useState<any>(null);
+    const [titluNou, setTitluNou] = useState("");
+
+    //state pentur notificare de copiere
+    const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+    //state pentru modalul de stergere
+    const [modalStergere, setModalStergere] = useState(false);
+    const [carteDeSters, setCarteDeSters] = useState<number | null>(null);
+
+    //ascultatori ptr comunicarea cu meniul lateral
     useEffect(() => {
         const deschideFereastraUrl = () => setIsModalOpen(true);
-
         const deschideEcranText = () => {
             setCarteaCurenta(null);
             setShowTextEditor(true);
         };
-
         const arataBiblioteca = () => {
             setCarteaCurenta(null);
             setShowTextEditor(false);
@@ -66,11 +77,9 @@ export default function Home() {
         fetchIstoric();
     }, []);
 
+    //functii api
     const handleGenereaza = async () => {
-        if (!url) {
-            alert("Te rog introdu un link valid!");
-            return;
-        }
+        if (!url) { alert("Te rog introdu un link valid!"); return; }
         setIsLoading(true);
         try {
             const response = await fetch("http://localhost:8000/extrage", {
@@ -90,23 +99,17 @@ export default function Home() {
             };
             setIstoricCarti((cartiVechi) => [carteNoua, ...cartiVechi]);
             setCarteaCurenta(carteNoua);
-
             setShowTextEditor(false);
-            window.dispatchEvent(new Event('reseteaza-meniu')); // Meniul se face verde pe Biblioteca
+            window.dispatchEvent(new Event('reseteaza-meniu'));
         } catch (error) {
             alert("A apărut o eroare la conectarea cu serverul.");
         } finally {
-            setIsLoading(false);
-            setIsModalOpen(false);
-            setUrl("");
+            setIsLoading(false); setIsModalOpen(false); setUrl("");
         }
     };
 
     const handleGenereazaDinText = async () => {
-        if (!titluText || !textManual) {
-            alert("Te rog introdu un titlu și un text!");
-            return;
-        }
+        if (!titluText || !textManual) { alert("Te rog introdu un titlu și un text!"); return; }
         setIsLoading(true);
         try {
             const response = await fetch("http://localhost:8000/genereaza_text", {
@@ -125,24 +128,118 @@ export default function Home() {
                 data_generare: new Date().toLocaleDateString("ro-RO")
             };
             setIstoricCarti((cartiVechi) => [carteNoua, ...cartiVechi]);
-
             setCarteaCurenta(carteNoua);
             setShowTextEditor(false);
-            window.dispatchEvent(new Event('reseteaza-meniu')); // Meniul se face verde pe Biblioteca
+            window.dispatchEvent(new Event('reseteaza-meniu'));
         } catch (error) {
             alert("Eroare la generarea textului.");
         } finally {
-            setIsLoading(false);
-            setTitluText("");
-            setTextManual("");
+            setIsLoading(false); setTitluText(""); setTextManual("");
         }
     };
+
+    //functii ptr meniu carduri (carti in biblioteca)
+
+    const toggleMeniu = (e: React.MouseEvent, id: number) => {
+        e.stopPropagation(); // Previne deschiderea player-ului cand apesi pe meniu
+        setMeniuDeschisId(meniuDeschisId === id ? null : id);
+    };
+
+    const handleShare = (e: React.MouseEvent, link: string) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(link);
+        setMeniuDeschisId(null);
+
+        //afisez toast-ul
+        setToastMessage("Link-ul audio a fost copiat!");
+
+        //il ascund automat dupa 3 secunde
+        setTimeout(() => {
+            setToastMessage(null);
+        }, 3000);
+    };
+
+    const handleDownload = async (e: React.MouseEvent, link: string, titlu: string) => {
+        e.stopPropagation();
+        setMeniuDeschisId(null);
+
+        try {
+            //descarc fisierul in background ca un 'blob' si fortez browserul sa il salveze
+            const response = await fetch(link);
+            const blob = await response.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            a.download = `${titlu}.mp3`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch (error) {
+            // Fallback in caz de eroare de retea
+            window.open(link, '_blank');
+        }
+    };
+
+    const deschideRedenumire = (e: React.MouseEvent, carte: any) => {
+        e.stopPropagation();
+        setCarteDeRedenumit(carte);
+        setTitluNou(carte.titlu);
+        setModalRedenumire(true);
+        setMeniuDeschisId(null);
+    };
+
+    const salveazaRedenumire = async () => {
+        if (!titluNou.trim()) return;
+        try {
+            await fetch(`http://localhost:8000/redenumeste/${carteDeRedenumit.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ titlu_nou: titluNou }),
+            });
+            //actualizez UI
+            setIstoricCarti(istoricCarti.map(c => c.id === carteDeRedenumit.id ? { ...c, titlu: titluNou } : c));
+            setModalRedenumire(false);
+        } catch (error) {
+            alert("Eroare la redenumire.");
+        }
+    };
+
+//fereastra de avertizare ptr stergere
+    const handleSterge = (e: React.MouseEvent, id: number) => {
+        e.stopPropagation();
+        setMeniuDeschisId(null);
+        setCarteDeSters(id);
+        setModalStergere(true); //deschid modalul periculos
+    };
+
+    //functia care se executa doar daca utilizatorul confirma stergerea
+    const confirmaStergerea = async () => {
+        if (carteDeSters === null) return;
+
+        try {
+            await fetch(`http://localhost:8000/sterge/${carteDeSters}`, { method: "DELETE" });
+            //sterg cartea din interfata
+            setIstoricCarti(istoricCarti.filter(c => c.id !== carteDeSters));
+
+            //inchid si resetez modalul
+            setModalStergere(false);
+            setCarteDeSters(null);
+        } catch (error) {
+            alert("Eroare la ștergere.");
+        }
+    };
+
+    //inchid meniul la un click oriunde altundeva pe pagina
+    useEffect(() => {
+        const handleClickOutside = () => setMeniuDeschisId(null);
+        window.addEventListener('click', handleClickOutside);
+        return () => window.removeEventListener('click', handleClickOutside);
+    }, []);
 
     return (
         <div className="flex flex-col h-full relative p-4 lg:p-8">
 
             {carteaCurenta ? (
-
                 //ecran player audio
                 <div className="w-full max-w-4xl mx-auto bg-white p-10 rounded-3xl shadow-sm border border-gray-100 animate-fade-in mt-4">
                     <button
@@ -188,10 +285,9 @@ export default function Home() {
 
             ) : showTextEditor ? (
 
-                // ecran editor de text
+                //ecran editor de text
                 <div className="w-full max-w-4xl mx-auto flex flex-col h-[85vh] mt-4 animate-fade-in">
                     <div className="bg-white p-10 rounded-3xl shadow-sm border border-gray-100 flex flex-col flex-1">
-
                         <div className="flex justify-center mb-8">
                             <input
                                 type="text"
@@ -201,14 +297,12 @@ export default function Home() {
                                 onChange={(e) => setTitluText(e.target.value)}
                             />
                         </div>
-
                         <textarea
                             placeholder="Tastează, lipește sau editează textul aici..."
                             className="w-full flex-1 border-0 p-4 focus:outline-none resize-none text-gray-700 leading-relaxed text-lg bg-transparent"
                             value={textManual}
                             onChange={(e) => setTextManual(e.target.value)}
                         />
-
                         <div className="mt-6 pt-6 border-t border-gray-100 flex justify-center">
                             <button
                                 onClick={handleGenereazaDinText}
@@ -223,8 +317,8 @@ export default function Home() {
 
             ) : (
 
-                // ecran biblioteca
-                <div className="flex-1 flex flex-col items-center justify-center">
+                //ecran biblioteca
+                <div className="flex-1 flex flex-col items-center justify-center relative">
                     {istoricCarti.length === 0 ? (
                         <div className="animate-fade-in opacity-80 mt-[-10vh] text-center">
                             <div className="text-6xl mb-6 grayscale opacity-40">📚</div>
@@ -240,13 +334,41 @@ export default function Home() {
                                 {istoricCarti.map((carte) => (
                                     <div
                                         key={carte.id}
-                                        className="bg-white p-6 rounded-2xl shadow-sm hover:shadow-xl transition-all border border-gray-100 cursor-pointer group flex flex-col h-full"
+                                        className="bg-white p-6 rounded-2xl shadow-sm hover:shadow-xl transition-all border border-gray-100 cursor-pointer group flex flex-col h-full relative"
                                         onClick={() => setCarteaCurenta(carte)}
                                     >
+
+                                        {/*buton meniu 3 puncte*/}
+                                        <button
+                                            onClick={(e) => toggleMeniu(e, carte.id)}
+                                            className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-dark-green transition-colors z-10 font-bold text-lg"
+                                        >
+                                            ⋮
+                                        </button>
+
+                                        {/*meniu dropdown*/}
+                                        {meniuDeschisId === carte.id && (
+                                            <div className="absolute top-12 right-4 bg-white border border-gray-100 shadow-xl rounded-xl py-2 w-48 z-20 animate-fade-in">
+                                                <button onClick={(e) => deschideRedenumire(e, carte)} className="w-full text-left px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-mid-green flex items-center transition-colors">
+                                                    <span className="mr-3 opacity-70"></span> Redenumește
+                                                </button>
+                                                <button onClick={(e) => handleDownload(e, carte.link_audio, carte.titlu)} className="w-full text-left px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-mid-green flex items-center transition-colors">
+                                                    <span className="mr-3 opacity-70"></span> Descarcă MP3
+                                                </button>
+                                                <button onClick={(e) => handleShare(e, carte.link_audio)} className="w-full text-left px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-mid-green flex items-center transition-colors">
+                                                    <span className="mr-3 opacity-70"></span> Distribuie link
+                                                </button>
+                                                <div className="border-t border-gray-100 my-1"></div>
+                                                <button onClick={(e) => handleSterge(e, carte.id)} className="w-full text-left px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-dark-green flex items-center transition-colors">
+                                                    <span className="mr-3 opacity-70"></span> Șterge document
+                                                </button>
+                                            </div>
+                                        )}
+
                                         <div className="w-12 h-12 bg-light-green/40 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform text-dark-green">
                                             🎧
                                         </div>
-                                        <h3 className="font-bold text-gray-800 mb-1 line-clamp-2" title={carte.titlu}>
+                                        <h3 className="font-bold text-gray-800 mb-1 line-clamp-2 pr-6" title={carte.titlu}>
                                             {carte.titlu}
                                         </h3>
                                         <p className="text-xs text-gray-400 mb-4 truncate flex-grow" title={carte.url_sursa}>
@@ -291,21 +413,77 @@ export default function Home() {
                         </label>
 
                         <div className="flex justify-end space-x-3">
-                            <button
-                                onClick={() => setIsModalOpen(false)}
-                                className="px-6 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl"
-                                disabled={isLoading}
-                            >
+                            <button onClick={() => setIsModalOpen(false)} className="px-6 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl" disabled={isLoading}>
                                 Anulează
                             </button>
-                            <button
-                                onClick={handleGenereaza}
-                                className="px-8 py-3 bg-mid-green text-white font-bold rounded-xl hover:bg-dark-green disabled:opacity-50 flex items-center shadow-lg"
-                                disabled={isLoading}
-                            >
+                            <button onClick={handleGenereaza} className="px-8 py-3 bg-mid-green text-white font-bold rounded-xl hover:bg-dark-green disabled:opacity-50 flex items-center shadow-lg" disabled={isLoading}>
                                 {isLoading ? "AI-ul citește..." : "Generează Audio"}
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/*modal redenumire carte*/}
+            {modalRedenumire && (
+                <div className="fixed inset-0 bg-darkest/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in p-4">
+                    <div className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-sm text-left border border-gray-100">
+                        <h2 className="text-xl font-extrabold text-dark-green mb-4">Redenumește cartea</h2>
+                        <input
+                            type="text"
+                            className="w-full border-2 border-gray-200 rounded-xl p-3 mb-6 focus:outline-none focus:border-mid-green"
+                            value={titluNou}
+                            onChange={(e) => setTitluNou(e.target.value)}
+                            autoFocus
+                        />
+                        <div className="flex justify-end space-x-3">
+                            <button onClick={() => setModalRedenumire(false)} className="px-4 py-2 text-gray-500 font-bold hover:bg-gray-100 rounded-xl">Anulează</button>
+                            <button onClick={salveazaRedenumire} className="px-6 py-2 bg-mid-green text-white font-bold rounded-xl hover:bg-dark-green shadow-md">Salvează</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/*notificare de tip toast*/}
+            {toastMessage && (
+                <div className="fixed bottom-10 left-1/2 transform -translate-x-1/2 bg-dark-green text-white px-6 py-3 rounded-full shadow-2xl flex items-center space-x-3 z-50 animate-fade-in">
+                    <span className="font-medium text-sm tracking-wide">{toastMessage}</span>
+                </div>
+            )}
+
+            {/*modal stergere carte*/}
+            {modalStergere && (
+                <div className="fixed inset-0 bg-darkest/40 flex items-center justify-center z-50 animate-fade-in p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm relative overflow-hidden">
+
+                        {/*header cu titlu si buton X*/}
+                        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-center relative">
+                            <h2 className="text-lg font-extrabold text-dark-green">Șterge Documentul</h2>
+                            <button
+                                onClick={() => {
+                                    setModalStergere(false);
+                                    setCarteDeSters(null);
+                                }}
+                                className="absolute right-4 text-gray-400 hover:text-gray-700 text-xl font-bold transition-colors leading-none"
+                            >
+                                &times;
+                            </button>
+                        </div>
+
+                        {/*corpul ferestrei*/}
+                        <div className="p-6 text-center">
+                            <p className="text-gray-600 mb-6 font-medium">
+                                Ești sigur că vrei să ștergi?
+                            </p>
+
+                            <button
+                                onClick={confirmaStergerea}
+                                className="w-full py-3 bg-dark-green text-white font-bold rounded-lg hover:bg-mid-green shadow-md transition-colors uppercase text-sm tracking-wider"
+                            >
+                                Șterge
+                            </button>
+                        </div>
+
                     </div>
                 </div>
             )}
