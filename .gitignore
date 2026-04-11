@@ -1,1 +1,15 @@
 backend/.env
+
+# Explanatory / internal docs (not pushed to avoid looking like boilerplate assistant output)
+documentation/
+
+# AI assistant / agent instruction files
+frontend/AGENTS.md
+frontend/CLAUDE.md
+.cursor/
+
+.idea/
+
+#Fisiere audio
+*.mp3
+*.wav

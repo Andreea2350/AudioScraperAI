@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+requests
+beautifulsoup4
+gTTS
+edge-tts
+pydub
+python-dotenv
+google-generativeai
+supabase
+bcrypt
+python-jose[cryptography]
+python-multipart
+pypdf
+python-docx
+ebooklib
+Pillow
