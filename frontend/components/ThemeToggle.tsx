@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import { applyTheme, readDomTheme } from "@/lib/theme";
 
 export function ThemeToggle({
@@ -11,6 +12,7 @@ export function ThemeToggle({
     /** Cand e true, culorile butonului se citesc pe fundalul verde din header-ul paginii intro. */
     onBrandBar?: boolean;
 }) {
+    const { t } = useI18n();
     const [mode, setMode] = useState<"light" | "dark">("light");
 
     useEffect(() => {
@@ -24,6 +26,7 @@ export function ThemeToggle({
     }, []);
 
     const isDark = mode === "dark";
+    const tooltipLabel = isDark ? t("theme.switchToLight") : t("theme.switchToDark");
 
     const surfaceStyle = {
         borderColor: "var(--theme-toggle-border)",
@@ -40,10 +43,9 @@ export function ThemeToggle({
         <button
             type="button"
             onClick={toggle}
-            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-colors duration-200 ${className}`}
+            className={`group relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-colors duration-200 ${className}`}
             style={onBrandBar ? brandStyle : surfaceStyle}
-            title={isDark ? "Treci la temă deschisă" : "Treci la temă întunecată"}
-            aria-label={isDark ? "Treci la temă deschisă" : "Treci la temă întunecată"}
+            aria-label={tooltipLabel}
             aria-pressed={isDark}
         >
             {isDark ? (
@@ -55,6 +57,27 @@ export function ThemeToggle({
                     <path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 8.5 8.5 0 1 0 21 14.5z" />
                 </svg>
             )}
+            <span
+                className="pointer-events-none absolute left-1/2 top-full z-[70] mt-2 -translate-x-1/2 whitespace-nowrap rounded-lg px-2 py-1 text-[11px] font-bold opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+                style={
+                    onBrandBar
+                        ? {
+                              background: "rgba(0,0,0,0.55)",
+                              color: "#ffffff",
+                              border: "1px solid rgba(255,255,255,0.25)",
+                              boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+                          }
+                        : {
+                              background: "var(--card-bg)",
+                              color: "var(--text-primary)",
+                              border: "1px solid var(--border-card)",
+                              boxShadow: "var(--shadow-dropdown)",
+                          }
+                }
+                role="tooltip"
+            >
+                {tooltipLabel}
+            </span>
         </button>
     );
 }

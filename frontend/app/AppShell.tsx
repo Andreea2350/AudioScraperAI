@@ -8,6 +8,10 @@ import { useState, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { API_BASE, authHeadersMultipart, clearAuthSession } from "@/lib/api";
 import { DOCUMENT_FILE_ACCEPT, IMAGE_FILE_ACCEPT } from "@/lib/fileUploadAccept";
+import { LibraryNewFolderButton } from "@/components/LibraryNewFolderButton";
+import { LibrarySearchByFlyout } from "@/components/LibrarySearchByFlyout";
+import { LibrarySortFilterFlyout } from "@/components/LibrarySortFilterFlyout";
+import { LibraryViewModeToggle } from "@/components/LibraryViewModeToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -29,6 +33,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const imageFileRef = useRef<HTMLInputElement>(null);
     const [accountMenuOpen, setAccountMenuOpen] = useState(false);
     const accountMenuRef = useRef<HTMLDivElement>(null);
+    /** Evită mismatch SSR/client: usePathname() poate diferi la primul paint. */
+    const [libraryHeaderReady, setLibraryHeaderReady] = useState(false);
+
+    useEffect(() => {
+        setLibraryHeaderReady(true);
+    }, []);
 
     useEffect(() => {
         if (pathname === "/lista-redare") {
@@ -440,13 +450,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
             <div className="z-10 flex min-w-0 flex-1 flex-col">
                 <header
-                    className="flex h-16 items-center justify-end gap-4 px-8"
+                    className="flex h-16 items-center justify-end gap-4 overflow-visible px-8"
                     style={{
                         background: "var(--header-bar-bg)",
                         boxShadow: "var(--shadow-header-bar)",
                     }}
                 >
-                    <ThemeToggle />
+                    <div className="flex items-center gap-2">
+                        {libraryHeaderReady && pathname === "/" && <LibraryNewFolderButton />}
+                        {libraryHeaderReady && pathname === "/" && <LibrarySearchByFlyout />}
+                        {libraryHeaderReady && pathname === "/" && <LibrarySortFilterFlyout />}
+                        {libraryHeaderReady && pathname === "/" && <LibraryViewModeToggle />}
+                        <ThemeToggle />
+                    </div>
                     <div className="relative flex items-center gap-0.5" ref={accountMenuRef}>
                         <button
                             type="button"

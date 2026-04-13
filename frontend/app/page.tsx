@@ -1,8 +1,23 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE, authHeadersJson, clearAuthSession, mesajEroareFastAPI } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
+import {
+    getBookFolderId,
+    LIBRARY_FILTERS_CHANGE_EVENT,
+    LIBRARY_FOLDERS_CHANGED_EVENT,
+    loadLibraryUi,
+    removeBookAssignmentsForFolder,
+    saveLibraryUi,
+    setBookFolderId as mapSetBookFolder,
+    type LibraryFiltersDetail,
+    type LibraryFolder,
+    type LibrarySortDir,
+    type LibrarySortKey,
+    type LibraryViewMode,
+} from "@/lib/libraryUiStorage";
 
 /**
  * Ecranul principal dupa login: lista de carti (GET /istoric), redare audio, editor pentru text manual,
@@ -10,6 +25,7 @@ import { API_BASE, authHeadersJson, clearAuthSession, mesajEroareFastAPI } from 
  * Ce butoane vezi (ex. public in catalog) depinde de rolul din localStorage.
  */
 export default function Home() {
+    const { t } = useI18n();
     const router = useRouter();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [url, setUrl] = useState("");
@@ -35,8 +51,62 @@ export default function Home() {
 
     const [userRol, setUserRol] = useState<string | null>(null);
 
+    const [folders, setFolders] = useState<LibraryFolder[]>([]);
+    const [bookFolderId, setBookFolderId] = useState<Record<string, string | null>>({});
+    const [viewMode, setViewMode] = useState<LibraryViewMode>("grid");
+    const [sortKey, setSortKey] = useState<LibrarySortKey>("data");
+    const [sortDir, setSortDir] = useState<LibrarySortDir>("desc");
+    const [nameFilter, setNameFilter] = useState("");
+    const [mutaCarteTarget, setMutaCarteTarget] = useState<any>(null);
+
     useEffect(() => {
         setUserRol(typeof window !== "undefined" ? localStorage.getItem("rol") : null);
+    }, []);
+
+    useEffect(() => {
+        const s = loadLibraryUi();
+        setFolders(s.folders);
+        setBookFolderId(s.bookFolderId);
+        setViewMode(s.viewMode);
+        setSortKey(s.sortKey);
+        setSortDir(s.sortDir);
+        setNameFilter(s.nameFilter ?? "");
+    }, []);
+
+    useEffect(() => {
+        saveLibraryUi({ folders, bookFolderId, viewMode, sortKey, sortDir, nameFilter });
+    }, [folders, bookFolderId, viewMode, sortKey, sortDir, nameFilter]);
+
+    useEffect(() => {
+        const onFilters = (e: Event) => {
+            const ce = e as CustomEvent<LibraryFiltersDetail>;
+            const d = ce.detail;
+            if (!d) return;
+            setNameFilter(d.nameFilter);
+            setSortKey(d.sortKey);
+            setSortDir(d.sortDir);
+        };
+        window.addEventListener(LIBRARY_FILTERS_CHANGE_EVENT, onFilters);
+        return () => window.removeEventListener(LIBRARY_FILTERS_CHANGE_EVENT, onFilters);
+    }, []);
+
+    useEffect(() => {
+        const onFolders = () => {
+            setFolders(loadLibraryUi().folders);
+        };
+        window.addEventListener(LIBRARY_FOLDERS_CHANGED_EVENT, onFolders);
+        return () => window.removeEventListener(LIBRARY_FOLDERS_CHANGED_EVENT, onFolders);
+    }, []);
+
+    useEffect(() => {
+        const onViewMode = (e: Event) => {
+            const ce = e as CustomEvent<{ mode: LibraryViewMode }>;
+            if (ce.detail?.mode === "grid" || ce.detail?.mode === "list") {
+                setViewMode(ce.detail.mode);
+            }
+        };
+        window.addEventListener("audiobooks-library-view-mode", onViewMode);
+        return () => window.removeEventListener("audiobooks-library-view-mode", onViewMode);
     }, []);
 
     useEffect(() => {
@@ -81,16 +151,22 @@ export default function Home() {
                 }
                 const json = await response.json();
                 if (json.status === "success" && json.data) {
-                    const cartiFormatate = json.data.map((item: any) => ({
-                        id: item.id,
-                        titlu: item.titlu || "Articol Fără Titlu",
-                        url_sursa: item.url,
-                        status: "Complet",
-                        link_audio: item.audio_link,
-                        text_extras: item.text_curatat,
-                        data_generare: new Date(item.creat_la).toLocaleDateString("ro-RO"),
-                        is_public: Boolean(item.is_public),
-                    }));
+                    const cartiFormatate = json.data.map((item: any) => {
+                        const ts = item.creat_la ? new Date(item.creat_la).getTime() : 0;
+                        const txt = item.text_curatat ?? "";
+                        return {
+                            id: item.id,
+                            titlu: item.titlu || "Articol Fără Titlu",
+                            url_sursa: item.url,
+                            status: "Complet",
+                            link_audio: item.audio_link,
+                            text_extras: item.text_curatat,
+                            data_generare: new Date(item.creat_la).toLocaleDateString("ro-RO"),
+                            is_public: Boolean(item.is_public),
+                            creat_la_ts: Number.isFinite(ts) ? ts : 0,
+                            lungime_text: typeof txt === "string" ? txt.length : 0,
+                        };
+                    });
                     setIstoricCarti(cartiFormatate);
                 }
             } catch (error) {
@@ -133,6 +209,8 @@ export default function Home() {
                 );
                 return;
             }
+            const tf = typeof data.text_final_audio === "string" ? data.text_final_audio : "";
+            const now = Date.now();
             const carteNoua = {
                 id: data.id ?? Date.now(),
                 titlu: data.titlu || "Articol Web",
@@ -142,6 +220,8 @@ export default function Home() {
                 text_extras: data.text_final_audio,
                 data_generare: new Date().toLocaleDateString("ro-RO"),
                 is_public: Boolean(data.is_public),
+                creat_la_ts: now,
+                lungime_text: tf.length,
             };
             setIstoricCarti((cartiVechi) => [carteNoua, ...cartiVechi]);
             setCarteaCurenta(carteNoua);
@@ -188,6 +268,8 @@ export default function Home() {
                 alert(typeof data.message === "string" ? data.message : "Eroare la generare.");
                 return;
             }
+            const tf2 = typeof data.text_final_audio === "string" ? data.text_final_audio : "";
+            const now2 = Date.now();
             const carteNoua = {
                 id: data.id ?? Date.now(),
                 titlu: titluText,
@@ -197,6 +279,8 @@ export default function Home() {
                 text_extras: data.text_final_audio,
                 data_generare: new Date().toLocaleDateString("ro-RO"),
                 is_public: Boolean(data.is_public),
+                creat_la_ts: now2,
+                lungime_text: tf2.length,
             };
             setIstoricCarti((cartiVechi) => [carteNoua, ...cartiVechi]);
             setCarteaCurenta(carteNoua);
@@ -304,6 +388,11 @@ export default function Home() {
                 headers: authHeadersJson(),
             });
             setIstoricCarti(istoricCarti.filter((c) => c.id !== carteDeSters));
+            setBookFolderId((prev) => {
+                const n = { ...prev };
+                delete n[String(carteDeSters)];
+                return n;
+            });
             setModalStergere(false);
             setCarteDeSters(null);
         } catch {
@@ -316,6 +405,84 @@ export default function Home() {
         window.addEventListener("click", handleClickOutside);
         return () => window.removeEventListener("click", handleClickOutside);
     }, []);
+
+    const cartiFiltrate = useMemo(() => {
+        let list = [...istoricCarti];
+        const q = nameFilter.trim().toLowerCase();
+        if (q) list = list.filter((c) => (c.titlu || "").toLowerCase().includes(q));
+        const dir = sortDir === "asc" ? 1 : -1;
+        list.sort((a, b) => {
+            if (sortKey === "nume") {
+                return dir * (a.titlu || "").localeCompare(b.titlu || "", "ro", { sensitivity: "base" });
+            }
+            if (sortKey === "dimensiune") {
+                return dir * ((a.lungime_text || 0) - (b.lungime_text || 0));
+            }
+            return dir * ((a.creat_la_ts || 0) - (b.creat_la_ts || 0));
+        });
+        return list;
+    }, [istoricCarti, nameFilter, sortKey, sortDir]);
+
+    type CarteRow = (typeof istoricCarti)[number];
+
+    const librarySections = useMemo(() => {
+        const unfiledLabel = t("library.sectionUnfiled");
+        const resolveFolder = (c: CarteRow): string | null => {
+            const fid = getBookFolderId(bookFolderId, c.id);
+            if (!fid) return null;
+            if (!folders.some((f) => f.id === fid)) return null;
+            return fid;
+        };
+        const byFolderId = new Map<string, CarteRow[]>();
+        const unfiled: CarteRow[] = [];
+        for (const c of cartiFiltrate) {
+            const fid = resolveFolder(c);
+            if (fid === null) unfiled.push(c);
+            else {
+                const arr = byFolderId.get(fid) ?? [];
+                arr.push(c);
+                byFolderId.set(fid, arr);
+            }
+        }
+        const sections: {
+            key: string;
+            title: string;
+            isUserFolder: boolean;
+            folderId: string | null;
+            books: CarteRow[];
+        }[] = [];
+        for (const f of folders) {
+            sections.push({
+                key: f.id,
+                title: f.name,
+                isUserFolder: true,
+                folderId: f.id,
+                books: byFolderId.get(f.id) ?? [],
+            });
+        }
+        if (unfiled.length > 0) {
+            sections.push({
+                key: "unfiled",
+                title: unfiledLabel,
+                isUserFolder: false,
+                folderId: null,
+                books: unfiled,
+            });
+        }
+        return sections;
+    }, [cartiFiltrate, folders, bookFolderId, t]);
+
+    const stergeDosar = (e: React.MouseEvent, folderId: string) => {
+        e.stopPropagation();
+        setFolders((prev) => prev.filter((f) => f.id !== folderId));
+        setBookFolderId((prev) => removeBookAssignmentsForFolder(prev, folderId));
+    };
+
+    const mutaCarteInDosar = (carteId: number, folderId: string | null) => {
+        setBookFolderId((prev) => mapSetBookFolder(prev, carteId, folderId));
+        setMutaCarteTarget(null);
+        setMeniuDeschisId(null);
+    };
 
     return (
         <div className="flex flex-col h-full relative p-4 lg:p-8">
@@ -490,8 +657,7 @@ export default function Home() {
                             className="w-full h-full pt-4 flex flex-col justify-start items-start"
                             style={{ animation: "fade-in 0.3s ease-out" }}
                         >
-                            {/* Library heading */}
-                            <div className="mb-8">
+                            <div className="mb-6 w-full">
                                 <h1 className="text-3xl font-extrabold tracking-tight" style={{ color: "var(--heading-on-surface)" }}>
                                     Biblioteca Mea
                                 </h1>
@@ -501,9 +667,46 @@ export default function Home() {
                                 />
                             </div>
 
-                            {/* Cards grid */}
+                            {cartiFiltrate.length === 0 ? (
+                                <p
+                                    className="py-10 text-sm font-medium text-center w-full"
+                                    style={{ color: "var(--text-muted)" }}
+                                >
+                                    {t("library.noBooksMatchFilters")}
+                                </p>
+                            ) : (
+                            <div className="flex w-full flex-col gap-10">
+                                {librarySections.map((section) => (
+                                    <div key={section.key} className="w-full">
+                                        <div className="mb-4 flex flex-wrap items-center gap-2">
+                                            <span className="text-base opacity-80" aria-hidden>
+                                                📁
+                                            </span>
+                                            <h2
+                                                className="text-lg font-extrabold tracking-tight"
+                                                style={{ color: "var(--heading-on-surface)" }}
+                                            >
+                                                {section.title}
+                                            </h2>
+                                            {section.isUserFolder && section.folderId ? (
+                                                <button
+                                                    type="button"
+                                                    className="ml-0.5 flex h-7 w-7 items-center justify-center rounded-lg text-sm font-bold leading-none opacity-60 transition-opacity hover:opacity-100"
+                                                    style={{ color: "var(--text-muted)" }}
+                                                    aria-label={`${t("library.deleteFolderAria")}: ${section.title}`}
+                                                    onClick={(e) => stergeDosar(e, section.folderId!)}
+                                                >
+                                                    ×
+                                                </button>
+                                            ) : null}
+                                        </div>
+                                        {section.books.length === 0 ? (
+                                            <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>
+                                                {t("library.folderEmpty")}
+                                            </p>
+                                        ) : viewMode === "grid" ? (
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 w-full">
-                                {istoricCarti.map((carte) => (
+                                {section.books.map((carte) => (
                                     <div
                                         key={carte.id}
                                         className="rounded-2xl cursor-pointer group flex flex-col h-full relative overflow-hidden"
@@ -618,6 +821,28 @@ export default function Home() {
                                                     ))}
                                                     <div className="my-1" style={{ borderTop: "1px solid var(--divider)" }} />
                                                     <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setMeniuDeschisId(null);
+                                                            setMutaCarteTarget(carte);
+                                                        }}
+                                                        className="w-full text-left px-4 py-2 text-sm font-medium flex items-center transition-colors duration-100"
+                                                        style={{ color: "var(--text-body)" }}
+                                                        onMouseEnter={(e) => {
+                                                            e.currentTarget.style.backgroundColor = "var(--hover-bg)";
+                                                            e.currentTarget.style.color = "var(--link-accent)";
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            e.currentTarget.style.backgroundColor = "transparent";
+                                                            e.currentTarget.style.color = "var(--text-body)";
+                                                        }}
+                                                    >
+                                                        <span className="mr-3 opacity-60">📁</span>
+                                                        Mută în dosar
+                                                    </button>
+                                                    <div className="my-1" style={{ borderTop: "1px solid var(--divider)" }} />
+                                                    <button
                                                         onClick={(e) => handleSterge(e, carte.id)}
                                                         className="w-full text-left px-4 py-2 text-sm font-medium flex items-center transition-colors duration-100"
                                                         style={{ color: "var(--text-body)" }}
@@ -689,6 +914,171 @@ export default function Home() {
                                     </div>
                                 ))}
                             </div>
+                                        ) : (
+                            <div className="flex flex-col gap-3 w-full">
+                                {section.books.map((carte) => (
+                                    <div
+                                        key={carte.id}
+                                        className="rounded-2xl cursor-pointer group flex flex-row items-center gap-3 w-full relative overflow-hidden py-3 pl-3 pr-3 sm:pl-4 sm:pr-4"
+                                        style={{
+                                            background: "var(--card-bg)",
+                                            boxShadow: "var(--shadow-card-sm)",
+                                            border: "1px solid var(--border-card)",
+                                            transition: "border-color 0.2s ease",
+                                        }}
+                                        onClick={() => setCarteaCurenta(carte)}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.borderColor = "rgba(176,228,204,0.5)";
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.borderColor = "var(--border-card)";
+                                        }}
+                                    >
+                                        {(userRol === "admin" || userRol === "user") && (
+                                            <label
+                                                className="absolute top-2 left-2 z-10 flex items-center gap-1 cursor-pointer select-none"
+                                                style={{ fontSize: "10px", fontWeight: 800, color: "var(--text-muted)" }}
+                                                onClick={(e) => e.stopPropagation()}
+                                                onMouseDown={(e) => e.stopPropagation()}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={Boolean(carte.is_public)}
+                                                    onChange={(e) => {
+                                                        void togglePublicCarte(e, carte);
+                                                    }}
+                                                    className="rounded border accent-mid-green scale-90"
+                                                    style={{ borderColor: "var(--input-border)" }}
+                                                />
+                                                <span>Public</span>
+                                            </label>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={(e) => toggleMeniu(e, carte.id)}
+                                            className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center rounded-full font-bold text-lg z-10 transition-all duration-150"
+                                            style={{ color: "var(--text-faint)" }}
+                                            onMouseEnter={(e) => {
+                                                e.currentTarget.style.backgroundColor = "var(--hover-bg)";
+                                                e.currentTarget.style.color = "var(--heading-on-surface)";
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                e.currentTarget.style.backgroundColor = "transparent";
+                                                e.currentTarget.style.color = "var(--text-faint)";
+                                            }}
+                                        >
+                                            ⋮
+                                        </button>
+                                        {meniuDeschisId === carte.id && (
+                                            <div
+                                                className="absolute top-11 right-2 rounded-xl py-1.5 w-48 z-20"
+                                                style={{
+                                                    animation: "fade-in 0.2s ease-out",
+                                                    background: "var(--card-bg)",
+                                                    boxShadow: "var(--shadow-dropdown)",
+                                                    border: "1px solid var(--dropdown-border)",
+                                                }}
+                                            >
+                                                {[
+                                                    { label: "Redenumește", icon: "✎", action: (e: React.MouseEvent) => deschideRedenumire(e, carte) },
+                                                    { label: "Descarcă MP3", icon: "↓", action: (e: React.MouseEvent) => handleDownload(e, carte.link_audio, carte.titlu) },
+                                                    { label: "Distribuie link", icon: "⎘", action: (e: React.MouseEvent) => handleShare(e, carte.link_audio) },
+                                                ].map((item) => (
+                                                    <button
+                                                        key={item.label}
+                                                        type="button"
+                                                        onClick={item.action}
+                                                        className="w-full text-left px-4 py-2 text-sm font-medium flex items-center transition-colors duration-100"
+                                                        style={{ color: "var(--text-body)" }}
+                                                        onMouseEnter={(e) => {
+                                                            e.currentTarget.style.backgroundColor = "var(--hover-bg)";
+                                                            e.currentTarget.style.color = "var(--link-accent)";
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            e.currentTarget.style.backgroundColor = "transparent";
+                                                            e.currentTarget.style.color = "var(--text-body)";
+                                                        }}
+                                                    >
+                                                        <span className="mr-3 opacity-60">{item.icon}</span>
+                                                        {item.label}
+                                                    </button>
+                                                ))}
+                                                <div className="my-1" style={{ borderTop: "1px solid var(--divider)" }} />
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setMeniuDeschisId(null);
+                                                        setMutaCarteTarget(carte);
+                                                    }}
+                                                    className="w-full text-left px-4 py-2 text-sm font-medium flex items-center transition-colors duration-100"
+                                                    style={{ color: "var(--text-body)" }}
+                                                    onMouseEnter={(e) => {
+                                                        e.currentTarget.style.backgroundColor = "var(--hover-bg)";
+                                                        e.currentTarget.style.color = "var(--link-accent)";
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                        e.currentTarget.style.backgroundColor = "transparent";
+                                                        e.currentTarget.style.color = "var(--text-body)";
+                                                    }}
+                                                >
+                                                    <span className="mr-3 opacity-60">📁</span>
+                                                    Mută în dosar
+                                                </button>
+                                                <div className="my-1" style={{ borderTop: "1px solid var(--divider)" }} />
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => handleSterge(e, carte.id)}
+                                                    className="w-full text-left px-4 py-2 text-sm font-medium flex items-center transition-colors duration-100"
+                                                    style={{ color: "var(--text-body)" }}
+                                                    onMouseEnter={(e) => {
+                                                        e.currentTarget.style.backgroundColor = "var(--hover-bg)";
+                                                        e.currentTarget.style.color = "var(--heading-on-surface)";
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                        e.currentTarget.style.backgroundColor = "transparent";
+                                                        e.currentTarget.style.color = "var(--text-body)";
+                                                    }}
+                                                >
+                                                    <span className="mr-3 opacity-60">✕</span>
+                                                    Șterge document
+                                                </button>
+                                            </div>
+                                        )}
+                                        <div
+                                            className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 ml-14 sm:ml-16"
+                                            style={{
+                                                background: "linear-gradient(135deg, rgba(176,228,204,0.5), rgba(176,228,204,0.2))",
+                                            }}
+                                        >
+                                            🎧
+                                        </div>
+                                        <div className="flex-1 min-w-0 pr-24">
+                                            <h3 className="font-extrabold truncate text-sm sm:text-base" style={{ color: "var(--text-primary)" }}>
+                                                {carte.titlu}
+                                            </h3>
+                                            <p
+                                                className="text-xs font-medium truncate"
+                                                style={{ color: "var(--text-muted)" }}
+                                                title={carte.url_sursa}
+                                            >
+                                                {carte.url_sursa}
+                                            </p>
+                                        </div>
+                                        <div
+                                            className="text-right text-[11px] sm:text-xs font-bold shrink-0 hidden sm:block self-center"
+                                            style={{ color: "var(--link-accent)" }}
+                                        >
+                                            {carte.data_generare}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -938,6 +1328,88 @@ export default function Home() {
                                 }}
                             >
                                 Șterge
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Mută în dosar ── */}
+            {mutaCarteTarget && (
+                <div
+                    className="fixed inset-0 flex items-center justify-center z-50 p-4"
+                    style={{
+                        background: "var(--overlay-scrim)",
+                        backdropFilter: "blur(6px)",
+                        animation: "fade-in 0.2s ease-out",
+                    }}
+                    onClick={() => setMutaCarteTarget(null)}
+                >
+                    <div
+                        role="dialog"
+                        aria-labelledby="muta-dosar-title"
+                        className="p-8 rounded-3xl w-full max-w-md text-left max-h-[85vh] overflow-y-auto"
+                        style={{
+                            background: "var(--card-bg)",
+                            boxShadow: "var(--shadow-modal)",
+                            border: "1px solid var(--border-card)",
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h2
+                            id="muta-dosar-title"
+                            className="text-xl font-extrabold mb-1"
+                            style={{ color: "var(--heading-on-surface)" }}
+                        >
+                            Mută în dosar
+                        </h2>
+                        <p className="text-sm font-medium mb-5 truncate" style={{ color: "var(--text-muted)" }} title={mutaCarteTarget.titlu}>
+                            {mutaCarteTarget.titlu}
+                        </p>
+                        <div className="flex flex-col gap-2">
+                            <button
+                                type="button"
+                                onClick={() => mutaCarteInDosar(mutaCarteTarget.id, null)}
+                                className="w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-colors duration-150"
+                                style={{
+                                    border: "2px solid var(--input-border)",
+                                    background: "var(--card-bg-muted)",
+                                    color: "var(--text-body)",
+                                }}
+                            >
+                                Fără dosar (eliberează)
+                            </button>
+                            {folders.map((fd) => (
+                                <button
+                                    key={fd.id}
+                                    type="button"
+                                    onClick={() => mutaCarteInDosar(mutaCarteTarget.id, fd.id)}
+                                    className="w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-colors duration-150"
+                                    style={{
+                                        border: "2px solid var(--input-border)",
+                                        background: "var(--card-bg-muted)",
+                                        color: "var(--text-body)",
+                                    }}
+                                >
+                                    📁 {fd.name}
+                                </button>
+                            ))}
+                        </div>
+                        {folders.length === 0 && (
+                            <p className="text-xs font-medium mt-3" style={{ color: "var(--text-faint)" }}>
+                                {t("library.noFoldersHintHeader")}
+                            </p>
+                        )}
+                        <div className="flex justify-end mt-6">
+                            <button
+                                type="button"
+                                onClick={() => setMutaCarteTarget(null)}
+                                className="px-4 py-2 font-bold rounded-xl text-sm transition-colors duration-150"
+                                style={{ color: "var(--text-muted)" }}
+                                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-bg)")}
+                                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                            >
+                                Închide
                             </button>
                         </div>
                     </div>

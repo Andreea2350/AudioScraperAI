@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Script from "next/script";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import AppShell from "./AppShell";
@@ -36,9 +35,10 @@ export default function RootLayout({
     return (
         <html lang="ro" suppressHydrationWarning>
             <body className={inter.className}>
-                <Script id="theme-init" strategy="beforeInteractive">
-                    {themeInit}
-                </Script>
+                <script
+                    id="theme-init"
+                    dangerouslySetInnerHTML={{ __html: themeInit }}
+                />
                 <AppShell>{children}</AppShell>
             </body>
         </html>
