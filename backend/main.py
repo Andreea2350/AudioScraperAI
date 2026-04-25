@@ -53,6 +53,7 @@ model = genai.GenerativeModel("gemini-2.5-flash") if _gemini_key else None
 # Client Supabase creat la prima folosire: asa poti deschide proiectul in IDE chiar daca .env
 # nu e complet, fara sa crape importul la pornire.
 _supabase_client: Client | None = None
+_carti_has_user_id: bool | None = None
 
 
 def get_supabase() -> Client:
@@ -68,6 +69,26 @@ def get_supabase() -> Client:
         _supabase_client = create_client(url, key)
     return _supabase_client
 
+
+def has_carti_user_id_column() -> bool:
+    """
+    Detecteaza o singura data daca schema curenta are `carti.user_id`.
+    Permite fallback pe proiecte unde migrarea inca nu a fost aplicata.
+    """
+    global _carti_has_user_id
+    if _carti_has_user_id is not None:
+        return _carti_has_user_id
+    try:
+        get_supabase().table("carti").select("user_id").limit(1).execute()
+        _carti_has_user_id = True
+    except Exception as e:
+        msg = str(e)
+        if "column carti.user_id does not exist" in msg or "42703" in msg:
+            _carti_has_user_id = False
+        else:
+            raise
+    return _carti_has_user_id
+
 # ── Auth config ──────────────────────────────────────────────────────────────
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-schimba-in-productie")
 ALGORITHM = "HS256"
@@ -77,18 +98,24 @@ ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
 app = FastAPI(title="Motor AI Audiobooks", version="1.0")
 
+# Origini implicite (dev) + optional CORS_EXTRA_ORIGINS (ex. domeniu productie sau apel direct la API).
+_cors_default = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
+]
+_cors_extra = os.getenv("CORS_EXTRA_ORIGINS", "").strip()
+_cors_origins = list(_cors_default)
+if _cors_extra:
+    _cors_origins.extend(p.strip() for p in _cors_extra.split(",") if p.strip())
+
 # Browserul (Next.js) ruleaza pe alt port decat API-ul; CORS permite apeluri cu cookie/credentiale.
 app.add_middleware(
     CORSMiddleware,
-    # Lista larga de origini ca sa mearga indiferent pe ce port porneste dev server-ul frontend.
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3002",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001",
-        "http://127.0.0.1:3002",
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -143,12 +170,27 @@ def proprietar_din_jwt(user: dict | None) -> str | None:
     return sub.lower() if sub else None
 
 
+def user_id_din_jwt(user: dict | None) -> int | None:
+    """Extrage id-ul numeric al utilizatorului din token-ul backend (tabel utilizatori)."""
+    if not user:
+        return None
+    raw = user.get("id")
+    try:
+        uid = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return uid if uid > 0 else None
+
+
 def campuri_proprietar_nou(user: dict | None) -> dict:
-    """La insert carte noua: seteaza cine e proprietarul si lasa cartea nepublicata pana o bifeaza userul."""
-    return {
+    """La insert carte noua: seteaza proprietarul (user_id + email fallback) si lasa cartea nepublicata."""
+    base = {
         "created_by_email": proprietar_din_jwt(user),
         "is_public": False,
     }
+    if has_carti_user_id_column():
+        base["user_id"] = user_id_din_jwt(user)
+    return base
 
 
 def _email_proprietar_db(val: str | None) -> str | None:
@@ -160,9 +202,19 @@ def _email_proprietar_db(val: str | None) -> str | None:
 
 
 def assert_poate_edita_cartea(user: dict, carte: dict) -> None:
-    """Admin poate tot. Restul doar pe cartile cu acelasi created_by_email; daca lipseste proprietarul, doar admin."""
+    """Admin poate tot. Restul doar pe cartile care au acelasi user_id (fallback: created_by_email pentru randuri legacy)."""
     rol = user.get("rol")
     if rol == "admin":
+        return
+    owner_id = user_id_din_jwt(user)
+    carte_user_id = carte.get("user_id")
+    try:
+        carte_user_id_int = int(carte_user_id) if carte_user_id is not None else None
+    except (TypeError, ValueError):
+        carte_user_id_int = None
+    if owner_id is not None and carte_user_id_int is not None:
+        if carte_user_id_int != owner_id:
+            raise HTTPException(status_code=403, detail="Nu poți edita cartea altui utilizator.")
         return
     owner = proprietar_din_jwt(user)
     created = _email_proprietar_db(carte.get("created_by_email"))
@@ -182,6 +234,16 @@ def assert_poate_seta_public(user: dict, carte: dict) -> None:
         raise HTTPException(status_code=403, detail="Oaspeții nu pot publica cărți în catalog.")
     if rol == "admin":
         return
+    owner_id = user_id_din_jwt(user)
+    carte_user_id = carte.get("user_id")
+    try:
+        carte_user_id_int = int(carte_user_id) if carte_user_id is not None else None
+    except (TypeError, ValueError):
+        carte_user_id_int = None
+    if owner_id is not None and carte_user_id_int is not None:
+        if carte_user_id_int != owner_id:
+            raise HTTPException(status_code=403, detail="Nu poți modifica vizibilitatea cărții altcuiva.")
+        return
     owner = proprietar_din_jwt(user)
     created = _email_proprietar_db(carte.get("created_by_email"))
     if created is None:
@@ -198,7 +260,7 @@ async def incarca_cartea_dupa_id(carte_id: int) -> dict:
     return raspuns.data[0]
 
 
-def sterge_carte_si_fisier(carte_id: int, audio_link: str | None) -> None:
+def sterge_carte_si_fisier(carte_id: int, audio_link: str | None, user: dict | None = None) -> None:
     """Scoate fisierul din bucket-ul audio-books (dupa nume din URL), apoi sterge randul din tabelul carti."""
     if audio_link:
         nume_fisier = audio_link.split("/")[-1]
@@ -206,7 +268,16 @@ def sterge_carte_si_fisier(carte_id: int, audio_link: str | None) -> None:
             get_supabase().storage.from_("audio-books").remove([nume_fisier])
         except Exception:
             pass
-    get_supabase().table("carti").delete().eq("id", carte_id).execute()
+    q = get_supabase().table("carti").delete().eq("id", carte_id)
+    if user and user.get("rol") != "admin":
+        owner_id = user_id_din_jwt(user)
+        if owner_id is not None and has_carti_user_id_column():
+            q = q.eq("user_id", owner_id)
+        else:
+            owner = proprietar_din_jwt(user)
+            if owner is not None:
+                q = q.eq("created_by_email", owner)
+    q.execute()
 
 
 # --- Modele Pydantic pentru body JSON pe rute POST/PATCH/PUT ---
@@ -240,11 +311,20 @@ async def salut_licenta():
 @app.post("/extrage")
 async def extrage_text(
     cerere: CerereExtragere,
-    user: dict | None = Depends(get_current_user_optional),
+    user: dict = Depends(get_current_user),
 ):
     try:
-        # Reutilizam munca anterioara daca acelasi URL e deja in baza (economiseste Gemini + TTS).
-        raspuns_db = get_supabase().table("carti").select("*").eq("url", cerere.url).execute()
+        # Reutilizam doar in biblioteca utilizatorului curent; nu partajam cache intre utilizatori diferiti.
+        q = get_supabase().table("carti").select("*").eq("url", cerere.url)
+        if user.get("rol") != "admin":
+            owner_id = user_id_din_jwt(user)
+            if owner_id is not None and has_carti_user_id_column():
+                q = q.eq("user_id", owner_id)
+            else:
+                owner = proprietar_din_jwt(user)
+                if owner is not None:
+                    q = q.eq("created_by_email", owner)
+        raspuns_db = q.limit(1).execute()
         cartea_exista = len(raspuns_db.data) > 0
 
         if cartea_exista and not cerere.force_regenerate:
@@ -383,7 +463,7 @@ async def extrage_text(
 @app.post("/genereaza_text")
 async def genereaza_din_text(
     req: TextLiberRequest,
-    user: dict | None = Depends(get_current_user_optional),
+    user: dict = Depends(get_current_user),
 ):
     nume_fisier = f"carte_text_{int(time.time())}.mp3"
     temp_mp3: str | None = None
@@ -581,10 +661,13 @@ async def get_istoric(user: dict = Depends(get_current_user)):
         rol = user.get("rol")
         q = get_supabase().table("carti").select("*")
         if rol != "admin":
-            owner = proprietar_din_jwt(user)
-            if owner is not None:
-                pat = owner.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                q = q.ilike("created_by_email", pat)
+            owner_id = user_id_din_jwt(user)
+            if owner_id is not None and has_carti_user_id_column():
+                q = q.eq("user_id", owner_id)
+            else:
+                owner = proprietar_din_jwt(user)
+                if owner is not None:
+                    q = q.eq("created_by_email", owner)
         response = q.order("creat_la", desc=True).execute()
 
         return {"status": "success", "data": response.data}
@@ -644,7 +727,7 @@ async def admin_sterge_carte_publica(carte_id: int, user: dict = Depends(get_cur
     carte = await incarca_cartea_dupa_id(carte_id)
     if not carte.get("is_public"):
         raise HTTPException(status_code=400, detail="Cartea nu este marcată ca publică.")
-    sterge_carte_si_fisier(carte_id, carte.get("audio_link"))
+    sterge_carte_si_fisier(carte_id, carte.get("audio_link"), user=user)
     return {"status": "success", "mesaj": "Cartea a fost ștearsă."}
 
 
@@ -672,7 +755,7 @@ async def sterge_carte(carte_id: int, user: dict = Depends(get_current_user)):
     try:
         carte = await incarca_cartea_dupa_id(carte_id)
         assert_poate_edita_cartea(user, carte)
-        sterge_carte_si_fisier(carte_id, carte.get("audio_link"))
+        sterge_carte_si_fisier(carte_id, carte.get("audio_link"), user=user)
         return {"status": "success", "mesaj": "Carte și fișier șterse"}
     except HTTPException:
         raise

@@ -1,0 +1,23 @@
+# Frontend + backend in acelasi proiect: `docker compose up --build` din radacina repo-ului.
+# UI: http://localhost:3001 — cererile catre /api/* sunt proxiate de Next catre serviciul backend.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    expose:
+      - "8765"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        BACKEND_INTERNAL_URL: http://backend:8765
+    ports:
+      - "3001:3001"
+    depends_on:
+      - backend
