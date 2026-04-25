@@ -1,0 +1,228 @@
+@import "../node_modules/tailwindcss/index.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Brand (inclusiv meniul stânga — aceleași token-uri). */
+  --color-darkest: #091413;
+  --color-dark-green: #285A48;
+  --color-mid-green: #408A71;
+  --color-light-green: #B0E4CC;
+
+  --color-amber: #C4933F;
+  --color-amber-light: #F5E4C0;
+  --color-ocean: #3A8FB5;
+  --color-ocean-light: #C5E8F5;
+  --color-rose: #C25B6F;
+  --color-rose-light: #F9D7DD;
+
+  /* Suprafețe aplicație (lângă meniul verde): hârtie caldă + accente reci. */
+  --color-surface: #f4f1ea;
+  --color-surface-green: #e2ebe6;
+
+  --animate-fade-in: fade-in 0.3s ease-out;
+  --animate-slide-up: slide-up 0.45s ease-out;
+  --animate-glow-pulse: glow-pulse 2.5s ease-in-out infinite;
+}
+
+/*
+ * Temă principală (tot în afara meniului stânga — gradientul verde rămâne în AppShell).
+ * Light: crem/linen + tipografie slate (albastru-gri) + titluri verzi ca pod spre sidebar.
+ * Dark: ardezie închisă + text sidef + titluri mentă + linkuri ocean (contrast cu panoul verde).
+ */
+:root {
+  color-scheme: light;
+  --page-bg: #f4f1ea;
+  --color-surface: var(--page-bg);
+  --color-surface-green: #e2ebe6;
+  --card-bg: #fffef9;
+  --card-bg-muted: #f2efe6;
+  --header-bar-bg: #ebe6dc;
+  --text-primary: #1a2630;
+  --text-body: #3a4a52;
+  --text-muted: #5d6e78;
+  --text-faint: #7a8c95;
+  --heading-on-surface: #2a5a4a;
+  --link-accent: #2d6d8c;
+  --border-subtle: rgba(26, 38, 48, 0.08);
+  --border-card: rgba(26, 38, 48, 0.11);
+  --divider: rgba(26, 38, 48, 0.1);
+  --input-border: #c5ccd4;
+  --input-bg: #faf8f3;
+  --input-bg-focus: #fffef9;
+  --hover-bg: #ebe8e0;
+  --hover-bg-strong: #e0dcd2;
+  --overlay-scrim: rgba(22, 26, 30, 0.45);
+  --player-well-a: #e2ebe8;
+  --player-well-b: #f0ece4;
+  --text-block-bg: #f5f2eb;
+  --dropdown-border: rgba(26, 38, 48, 0.09);
+  --modal-header-from: #f2efe6;
+  --modal-header-to: #fffef9;
+  --focus-ring: 0 0 0 4px rgba(45, 109, 140, 0.18);
+  --shadow-card-lg: 0 4px 28px rgba(26, 38, 48, 0.07), 0 1px 4px rgba(26, 38, 48, 0.04);
+  --shadow-card-sm: 0 2px 12px rgba(26, 38, 48, 0.06), 0 1px 3px rgba(26, 38, 48, 0.035);
+  --shadow-card-hover: 0 12px 36px rgba(42, 90, 74, 0.12), 0 2px 8px rgba(45, 109, 140, 0.08);
+  --shadow-modal: 0 24px 64px rgba(26, 38, 48, 0.14), 0 4px 16px rgba(26, 38, 48, 0.06);
+  --shadow-dropdown: 0 10px 32px rgba(26, 38, 48, 0.1), 0 2px 8px rgba(26, 38, 48, 0.05);
+  --shadow-player-inset: inset 0 2px 14px rgba(26, 38, 48, 0.06);
+  --shadow-header-bar: 0 1px 0 var(--border-subtle), 0 2px 10px rgba(26, 38, 48, 0.05);
+  --shadow-intro-header: 0 4px 22px rgba(26, 38, 48, 0.12);
+  --shadow-toast: 0 8px 32px rgba(26, 38, 48, 0.18), 0 0 0 1px rgba(42, 90, 74, 0.12);
+  --shadow-btn-primary: 0 4px 18px rgba(42, 90, 74, 0.28);
+  --shadow-btn-primary-hover: 0 6px 26px rgba(42, 90, 74, 0.38);
+  --shadow-btn-sm: 0 3px 14px rgba(42, 90, 74, 0.26);
+  --shadow-btn-sm-hover: 0 5px 22px rgba(45, 109, 140, 0.22);
+  --shadow-btn-destructive: 0 4px 16px rgba(26, 38, 48, 0.15);
+  --shadow-btn-destructive-hover: 0 6px 24px rgba(42, 90, 74, 0.28);
+  --toggle-bg: rgba(255, 255, 255, 0.2);
+  --toggle-border: rgba(176, 228, 204, 0.35);
+  --toggle-icon: #ffffff;
+  --theme-toggle-bg: #e8e4db;
+  --theme-toggle-border: rgba(26, 38, 48, 0.14);
+  --theme-toggle-fg: #2a5a4a;
+}
+
+html.dark {
+  color-scheme: dark;
+  --page-bg: #0f1418;
+  --color-surface: var(--page-bg);
+  --color-surface-green: #1a252e;
+  --card-bg: #182026;
+  --card-bg-muted: #1e2a32;
+  --header-bar-bg: #141b21;
+  --text-primary: #eef1f3;
+  --text-body: #b8c5cc;
+  --text-muted: #8a9aa8;
+  --text-faint: #6b7d8c;
+  --heading-on-surface: #9dd4be;
+  --link-accent: #7eb8d4;
+  --border-subtle: rgba(126, 184, 212, 0.1);
+  --border-card: rgba(157, 212, 190, 0.2);
+  --divider: rgba(138, 154, 168, 0.22);
+  --input-border: rgba(126, 184, 212, 0.38);
+  --input-bg: #151d24;
+  --input-bg-focus: #1c262f;
+  --hover-bg: #222d36;
+  --hover-bg-strong: #2a3640;
+  --overlay-scrim: rgba(4, 8, 12, 0.82);
+  --player-well-a: #1a252d;
+  --player-well-b: #12171d;
+  --text-block-bg: #151c22;
+  --dropdown-border: rgba(126, 184, 212, 0.14);
+  --modal-header-from: #1c262f;
+  --modal-header-to: #182026;
+  --focus-ring: 0 0 0 4px rgba(126, 184, 212, 0.3);
+  --shadow-card-lg: 0 12px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(126, 184, 212, 0.09);
+  --shadow-card-sm: 0 4px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(126, 184, 212, 0.07);
+  --shadow-card-hover: 0 16px 44px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(157, 212, 190, 0.18);
+  --shadow-modal: 0 28px 80px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(126, 184, 212, 0.11);
+  --shadow-dropdown: 0 16px 48px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(126, 184, 212, 0.09);
+  --shadow-player-inset: inset 0 2px 22px rgba(0, 0, 0, 0.4);
+  --shadow-header-bar: 0 1px 0 var(--border-subtle), 0 4px 24px rgba(0, 0, 0, 0.38);
+  --shadow-intro-header: 0 6px 28px rgba(0, 0, 0, 0.52);
+  --shadow-toast: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(157, 212, 190, 0.2);
+  --shadow-btn-primary: 0 6px 24px rgba(0, 0, 0, 0.45), 0 0 22px rgba(126, 184, 212, 0.2);
+  --shadow-btn-primary-hover: 0 8px 32px rgba(0, 0, 0, 0.52), 0 0 30px rgba(157, 212, 190, 0.25);
+  --shadow-btn-sm: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 18px rgba(126, 184, 212, 0.15);
+  --shadow-btn-sm-hover: 0 6px 28px rgba(0, 0, 0, 0.48), 0 0 24px rgba(126, 184, 212, 0.22);
+  --shadow-btn-destructive: 0 6px 24px rgba(0, 0, 0, 0.45);
+  --shadow-btn-destructive-hover: 0 8px 32px rgba(0, 0, 0, 0.52), 0 0 22px rgba(126, 184, 212, 0.18);
+  --toggle-bg: rgba(255, 255, 255, 0.08);
+  --toggle-border: rgba(176, 228, 204, 0.28);
+  --toggle-icon: #b0e4cc;
+  --theme-toggle-bg: #1e2a32;
+  --theme-toggle-border: rgba(126, 184, 212, 0.24);
+  --theme-toggle-fg: #9dd4be;
+
+  --color-amber-light: rgba(196, 147, 63, 0.2);
+  --color-ocean-light: rgba(126, 184, 212, 0.18);
+  --color-rose-light: rgba(194, 91, 111, 0.16);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 16px 2px rgba(64, 138, 113, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 28px 6px rgba(64, 138, 113, 0.55);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+body {
+  background-color: var(--page-bg);
+  color: var(--text-primary);
+}
+
+/* Login: plăci rol ne-selectate (evită gri Tailwind pe temă închisă). */
+.role-pick-idle {
+  border-color: var(--border-card);
+  background-color: var(--card-bg-muted);
+}
+.role-pick-idle:hover {
+  border-color: var(--text-faint);
+}
+.role-pick-icon-idle {
+  background-color: var(--hover-bg);
+  color: var(--text-faint);
+}
+
+.glow-green {
+  box-shadow: 0 0 20px 4px rgba(64, 138, 113, 0.4);
+}
+
+.glow-amber {
+  box-shadow: 0 0 20px 4px rgba(196, 147, 63, 0.4);
+}
+
+.glow-ocean {
+  box-shadow: 0 0 20px 4px rgba(58, 143, 181, 0.4);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(45, 109, 140, 0.22);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(45, 109, 140, 0.42);
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background: rgba(126, 184, 212, 0.22);
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(126, 184, 212, 0.4);
+}
