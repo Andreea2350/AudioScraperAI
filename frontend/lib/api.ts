@@ -1,6 +1,35 @@
-/** URL de baza al API-ului FastAPI; in dev folosim 8765 ca sa evitam conflicte cu portul 8000 pe Windows. */
-export const API_BASE =
-    process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8765";
+/**
+ * URL de baza pentru FastAPI.
+ * Implicit `/api`: Next.js face proxy catre backend (acelasi domeniu/port la deploy).
+ * Seteaza NEXT_PUBLIC_API_URL daca vrei sa apelezi direct backend-ul (ex. alt host).
+ */
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "/api";
+
+function getActiveSessionToken(): string | null {
+    if (typeof window === "undefined") return null;
+
+    const legacyToken = localStorage.getItem("token");
+    if (legacyToken) return legacyToken;
+
+    const directAccessToken = localStorage.getItem("access_token");
+    if (directAccessToken) return directAccessToken;
+
+    // Compatibilitate: formatul folosit de Supabase JS in localStorage.
+    for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith("sb-") || !key.endsWith("-auth-token")) continue;
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        try {
+            const parsed = JSON.parse(raw) as { access_token?: string };
+            if (parsed.access_token) return parsed.access_token;
+        } catch {
+            // ignoram cheile invalide
+        }
+    }
+
+    return null;
+}
 
 /**
  * Construieste headere pentru fetch JSON: Content-Type + Authorization Bearer daca exista token in localStorage.
@@ -8,10 +37,8 @@ export const API_BASE =
  */
 export function authHeadersJson(): HeadersInit {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (typeof window !== "undefined") {
-        const t = localStorage.getItem("token");
-        if (t) headers.Authorization = `Bearer ${t}`;
-    }
+    const t = getActiveSessionToken();
+    if (t) headers.Authorization = `Bearer ${t}`;
     return headers;
 }
 
@@ -39,10 +66,8 @@ export function mesajEroareFastAPI(data: unknown, fallback: string): string {
 
 export function authHeadersMultipart(): HeadersInit {
     const headers: Record<string, string> = {};
-    if (typeof window !== "undefined") {
-        const t = localStorage.getItem("token");
-        if (t) headers.Authorization = `Bearer ${t}`;
-    }
+    const t = getActiveSessionToken();
+    if (t) headers.Authorization = `Bearer ${t}`;
     return headers;
 }
 
