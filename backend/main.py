@@ -25,11 +25,20 @@ import bcrypt as bcrypt_lib
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
 
-from long_text_pipeline import (
-    MIN_FINAL_MP3_BYTES,
-    curata_text_cu_gemini,
-    synthesize_ro_to_mp3_path,
-)
+try:
+    # Ruleaza din folderul backend (ex. `python __main__.py`).
+    from long_text_pipeline import (
+        MIN_FINAL_MP3_BYTES,
+        curata_text_cu_gemini,
+        synthesize_ro_to_mp3_path,
+    )
+except ModuleNotFoundError:
+    # Import de pachet (ex. Vercel: `from backend.main import app`).
+    from backend.long_text_pipeline import (
+        MIN_FINAL_MP3_BYTES,
+        curata_text_cu_gemini,
+        synthesize_ro_to_mp3_path,
+    )
 
 
 # Citeste variabile din fisierul .env (chei API, URL Supabase, secret JWT etc.).

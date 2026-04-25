@@ -5,9 +5,8 @@ import path from "path";
 const appRoot = path.resolve(process.cwd());
 
 /**
- * In productie / Docker, seteaza BACKEND_INTERNAL_URL la URL-ul din reteaua interna
- * (ex. http://backend:8765) inainte de `next build`, ca rewrite-urile sa pointeze corect.
- * In dev local, implicit http://127.0.0.1:8765 (acelasi host ca browserul).
+ * In Docker, seteaza BACKEND_INTERNAL_URL (ex. http://backend:8765) la build pentru proxy /api.
+ * Pe Vercel nu fortam rewrite catre localhost: backend-ul ruleaza ca functie Python in acelasi proiect.
  */
 const nextConfig: NextConfig = {
     output: "standalone",
@@ -17,10 +16,9 @@ const nextConfig: NextConfig = {
         root: appRoot,
     },
     async rewrites() {
-        const backend = (process.env.BACKEND_INTERNAL_URL || "http://127.0.0.1:8765").replace(
-            /\/$/,
-            "",
-        );
+        const defaultBackend = process.env.VERCEL ? "" : "http://127.0.0.1:8765";
+        const backend = (process.env.BACKEND_INTERNAL_URL || defaultBackend).trim().replace(/\/$/, "");
+        if (!backend) return [];
         return [{ source: "/api/:path*", destination: `${backend}/:path*` }];
     },
 };
