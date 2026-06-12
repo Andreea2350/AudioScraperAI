@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { API_BASE, authHeadersJson, clearAuthSession, mesajEroareFastAPI } from "@/lib/api";
+import { API_BASE, authHeadersJson, clearAuthSession, fetchCarteSegmente, fetchGuestCredits, GUEST_JOB_MAX_CHARS, GUEST_PREVIEW_CHARS, isGuestSession, mesajEroareFastAPI, segmentsFromCarteDb, streamExtrageUrl, streamGenereazaText, type GenerationSegment, type GenerationStreamEvent, type GuestCreditsInfo, type PlaylistMode } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { GenerationPlaylist } from "@/components/GenerationPlaylist";
 import {
     getBookFolderId,
     LIBRARY_FILTERS_CHANGE_EVENT,
@@ -25,7 +26,7 @@ import {
  * Ce butoane vezi (ex. public in catalog) depinde de rolul din localStorage.
  */
 export default function Home() {
-    const { t } = useI18n();
+    const { t, locale } = useI18n();
     const router = useRouter();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [url, setUrl] = useState("");
@@ -50,6 +51,17 @@ export default function Home() {
     const [carteDeSters, setCarteDeSters] = useState<number | null>(null);
 
     const [userRol, setUserRol] = useState<string | null>(null);
+    const [guestCredits, setGuestCredits] = useState<GuestCreditsInfo | null>(null);
+    const [genPhase, setGenPhase] = useState<string | null>(null);
+    const [genSegments, setGenSegments] = useState<GenerationSegment[]>([]);
+    const [genSegmentsTotal, setGenSegmentsTotal] = useState<number | null>(null);
+    const [genActiveSegment, setGenActiveSegment] = useState<number | null>(null);
+    const [genPlaylistMode, setGenPlaylistMode] = useState<PlaylistMode>("parts");
+    const [isGuestPreviewGen, setIsGuestPreviewGen] = useState(false);
+    const [showGuestSignupPrompt, setShowGuestSignupPrompt] = useState(false);
+    const [libSegments, setLibSegments] = useState<GenerationSegment[]>([]);
+    const [libPlaylistMode, setLibPlaylistMode] = useState<PlaylistMode>("parts");
+    const [curataCuGemini, setCurataCuGemini] = useState(false);
 
     const [folders, setFolders] = useState<LibraryFolder[]>([]);
     const [bookFolderId, setBookFolderId] = useState<Record<string, string | null>>({});
@@ -62,6 +74,14 @@ export default function Home() {
     useEffect(() => {
         setUserRol(typeof window !== "undefined" ? localStorage.getItem("rol") : null);
     }, []);
+
+    useEffect(() => {
+        if (!isGuestSession()) {
+            setGuestCredits(null);
+            return;
+        }
+        fetchGuestCredits().then(setGuestCredits).catch(() => setGuestCredits(null));
+    }, [userRol, isLoading]);
 
     useEffect(() => {
         const s = loadLibraryUi();
@@ -129,7 +149,7 @@ export default function Home() {
         const onDocumentText = (e: Event) => {
             const ce = e as CustomEvent<{ titlu: string; text: string }>;
             if (!ce.detail?.text) return;
-            setTitluText(ce.detail.titlu || "Document");
+            setTitluText(ce.detail.titlu || t("home.defaultDocument"));
             setTextManual(ce.detail.text);
             setCarteaCurenta(null);
             setShowTextEditor(true);
@@ -156,12 +176,12 @@ export default function Home() {
                         const txt = item.text_curatat ?? "";
                         return {
                             id: item.id,
-                            titlu: item.titlu || "Articol Fără Titlu",
+                            titlu: item.titlu || t("home.untitledArticle"),
                             url_sursa: item.url,
-                            status: "Complet",
+                            status: t("home.statusComplete"),
                             link_audio: item.audio_link,
                             text_extras: item.text_curatat,
-                            data_generare: new Date(item.creat_la).toLocaleDateString("ro-RO"),
+                            data_generare: new Date(item.creat_la).toLocaleDateString(locale === "en" ? "en-GB" : "ro-RO"),
                             is_public: Boolean(item.is_public),
                             creat_la_ts: Number.isFinite(ts) ? ts : 0,
                             lungime_text: typeof txt === "string" ? txt.length : 0,
@@ -179,117 +199,206 @@ export default function Home() {
         };
         window.addEventListener("reincarca-istoric", reincarca);
         return () => window.removeEventListener("reincarca-istoric", reincarca);
-    }, [router]);
+    }, [router, t, locale]);
 
-    /** POST /extrage: HTML -> Gemini -> TTS -> Supabase; header Authorization leaga cartea de utilizatorul logat. */
-    const handleGenereaza = async () => {
-        if (!url) { alert("Te rog introdu un link valid!"); return; }
-        setIsLoading(true);
-        try {
-            const response = await fetch(`${API_BASE}/extrage`, {
-                method: "POST",
-                headers: authHeadersJson(),
-                body: JSON.stringify({ url, force_regenerate: forceRegenerate }),
+    useEffect(() => {
+        if (!carteaCurenta?.id) {
+            setLibSegments([]);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            const rows = await fetchCarteSegmente(Number(carteCurenta.id));
+            if (cancelled) return;
+            const mode = (carteaCurenta.playlist_mode as PlaylistMode) || (rows.some((r) => r.chapter_index != null) ? "chapters" : "parts");
+            setLibPlaylistMode(mode);
+            setLibSegments(rows.length ? segmentsFromCarteDb(rows, mode) : []);
+        })();
+        return () => { cancelled = true; };
+    }, [carteaCurenta?.id, carteaCurenta?.playlist_mode]);
+
+    const applyStreamEvent = (evt: GenerationStreamEvent): Record<string, unknown> | null | "error" => {
+        if (evt.type === "playlist_mode") {
+            setGenPlaylistMode(evt.mode);
+            return null;
+        }
+        if (evt.type === "preview") {
+            setIsGuestPreviewGen(true);
+            return null;
+        }
+        if (evt.type === "phase") {
+            setGenPhase(evt.phase);
+            if (evt.segments_total != null) setGenSegmentsTotal(evt.segments_total);
+            return null;
+        }
+        if (evt.type === "segment") {
+            setGenPhase("tts");
+            setGenSegments((prev) => {
+                const next = prev.filter((s) => s.index !== evt.index);
+                next.push(evt);
+                return next.sort((a, b) => a.index - b.index);
             });
-            const data = await response.json().catch(() => ({} as Record<string, unknown>));
-            if (!response.ok) {
-                alert(
-                    mesajEroareFastAPI(
-                        data,
-                        `Eroare la extragere (HTTP ${response.status}).`,
-                    ),
-                );
+            return null;
+        }
+        if (evt.type === "done") {
+            return evt as Record<string, unknown>;
+        }
+        if (evt.type === "error") {
+            const msg = typeof evt.detail === "string" ? evt.detail : t("home.alertGenerateError");
+            alert(msg);
+            return "error";
+        }
+        return null;
+    };
+
+    const finalizeCarteFromStream = (
+        data: Record<string, unknown>,
+        meta: { titlu: string; url_sursa: string },
+    ) => {
+        if (data.guest_credits && typeof data.guest_credits === "object") {
+            const gc = data.guest_credits as { credits_remaining?: number };
+            setGuestCredits((prev) =>
+                prev ? { ...prev, credits_remaining: gc.credits_remaining ?? prev.credits_remaining } : prev,
+            );
+        }
+        const tf = typeof data.text_final_audio === "string" ? data.text_final_audio : "";
+        const now = Date.now();
+        const segs = Array.isArray(data.segments) ? data.segments : genSegments;
+        const carteNoua = {
+            id: data.id ?? Date.now(),
+            titlu: (data.titlu as string) || meta.titlu,
+            url_sursa: meta.url_sursa,
+            status: data.status,
+            link_audio: data.link_audio,
+            text_extras: data.text_final_audio,
+            data_generare: new Date().toLocaleDateString(locale === "en" ? "en-GB" : "ro-RO"),
+            is_public: Boolean(data.is_public),
+            creat_la_ts: now,
+            lungime_text: tf.length,
+            segments: segs,
+            playlist_mode: (data.playlist_mode as PlaylistMode) || genPlaylistMode,
+            is_guest_preview: Boolean(data.is_guest_preview),
+        };
+        setIstoricCarti((cartiVechi) => [carteNoua, ...cartiVechi]);
+        setCarteaCurenta(carteNoua);
+        setLibSegments(segs as GenerationSegment[]);
+        setLibPlaylistMode(carteNoua.playlist_mode);
+        setShowTextEditor(false);
+        setGenPhase(null);
+        window.dispatchEvent(new Event("reseteaza-meniu"));
+    };
+
+    /** POST /extrage/stream: URL → extract + TTS cu playlist live. */
+    const handleGenereaza = async () => {
+        if (!url) { alert(t("home.alertValidUrl")); return; }
+        setIsLoading(true);
+        setGenPhase("extracting");
+        setGenSegments([]);
+        setGenSegmentsTotal(null);
+        setGenPlaylistMode("parts");
+        setIsGuestPreviewGen(false);
+        let success = false;
+        try {
+            let donePayload: Record<string, unknown> | null = null;
+            await streamExtrageUrl(
+                { url, force_regenerate: forceRegenerate },
+                (evt) => {
+                    const r = applyStreamEvent(evt);
+                    if (r === "error") return;
+                    if (r) donePayload = r;
+                },
+            );
+            if (!donePayload) {
+                alert(t("home.alertUrlError"));
                 return;
             }
-            if (data.status === "Eroare") {
-                alert(
-                    typeof data.detalii === "string"
-                        ? data.detalii
-                        : "Eroare la procesarea URL-ului.",
-                );
+            if (donePayload.from_cache) {
+                const data = donePayload;
+                const rows = await fetchCarteSegmente(Number(data.id));
+                const mode = rows.some((r) => r.chapter_index != null) ? "chapters" : "parts";
+                const carteNoua = {
+                    id: data.id,
+                    titlu: data.titlu || t("home.webArticle"),
+                    url_sursa: url,
+                    status: data.status,
+                    link_audio: data.link_audio,
+                    text_extras: data.text_final_audio,
+                    data_generare: new Date().toLocaleDateString(locale === "en" ? "en-GB" : "ro-RO"),
+                    is_public: Boolean(data.is_public),
+                    playlist_mode: mode,
+                };
+                setCarteaCurenta(carteNoua);
+                setLibSegments(rows.length ? segmentsFromCarteDb(rows, mode) : []);
+                setLibPlaylistMode(mode);
+                success = true;
                 return;
             }
-            const tf = typeof data.text_final_audio === "string" ? data.text_final_audio : "";
-            const now = Date.now();
-            const carteNoua = {
-                id: data.id ?? Date.now(),
-                titlu: data.titlu || "Articol Web",
-                url_sursa: url,
-                status: data.status,
-                link_audio: data.link_ascultare || data.link_audio,
-                text_extras: data.text_final_audio,
-                data_generare: new Date().toLocaleDateString("ro-RO"),
-                is_public: Boolean(data.is_public),
-                creat_la_ts: now,
-                lungime_text: tf.length,
-            };
-            setIstoricCarti((cartiVechi) => [carteNoua, ...cartiVechi]);
-            setCarteaCurenta(carteNoua);
-            setShowTextEditor(false);
-            window.dispatchEvent(new Event("reseteaza-meniu"));
-        } catch (error) {
-            alert("A apărut o eroare la conectarea cu serverul.");
+            success = true;
+            finalizeCarteFromStream(donePayload, { titlu: String(donePayload.titlu || t("home.webArticle")), url_sursa: url });
+        } catch (err) {
+            const msg = err instanceof Error && err.message ? err.message : t("home.alertServerError");
+            alert(msg);
         } finally {
-            setIsLoading(false); setIsModalOpen(false); setUrl("");
+            setIsLoading(false);
+            if (success) {
+                setIsModalOpen(false);
+                setUrl("");
+                setGenSegments([]);
+                setGenPhase(null);
+            } else {
+                setGenPhase(null);
+                setGenSegments([]);
+            }
         }
     };
 
-    /** POST /genereaza_text: acelasi flux TTS ca la URL, dar sursa e textul din formular. */
+    /** POST /genereaza_text/stream: curatare Gemini + TTS pe segmente + playlist live. */
     const handleGenereazaDinText = async () => {
-        if (!titluText || !textManual) { alert("Te rog introdu un titlu și un text!"); return; }
+        if (!titluText || !textManual) { alert(t("home.alertTitleAndText")); return; }
+        const charLen = textManual.trim().length;
         setIsLoading(true);
+        setIsGuestPreviewGen(isGuestSession() && charLen > GUEST_PREVIEW_CHARS);
+        if (curataCuGemini) {
+            setGenPhase("cleaning");
+            setGenSegmentsTotal(null);
+        } else {
+            setGenPhase("tts");
+            setGenSegmentsTotal(Math.max(1, Math.ceil(Math.min(charLen, isGuestSession() ? GUEST_PREVIEW_CHARS : charLen) / 2800)));
+        }
+        setGenSegments([]);
+        setGenPlaylistMode(charLen >= 50000 ? "chapters" : "parts");
+        let success = false;
         try {
-            // Cartile lungi pot depasi timeout-ul implicit al fetch; unde exista AbortSignal.timeout folosim 45 minute.
-            const longWait =
-                typeof AbortSignal !== "undefined" &&
-                typeof (AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal }).timeout ===
-                    "function"
-                    ? (AbortSignal as unknown as { timeout: (ms: number) => AbortSignal }).timeout(
-                          45 * 60 * 1000,
-                      )
-                    : undefined;
-            const response = await fetch(`${API_BASE}/genereaza_text`, {
-                method: "POST",
-                headers: authHeadersJson(),
-                body: JSON.stringify({ titlu: titluText, text: textManual }),
-                signal: longWait,
-            });
-            const data = await response.json().catch(() => ({} as Record<string, unknown>));
-            if (!response.ok) {
-                alert(
-                    mesajEroareFastAPI(
-                        data,
-                        `Eroare la generare (HTTP ${response.status}).`,
-                    ),
-                );
+            let donePayload: Record<string, unknown> | null = null;
+            await streamGenereazaText(
+                { titlu: titluText, text: textManual, curata_cu_gemini: curataCuGemini },
+                (evt) => {
+                    const r = applyStreamEvent(evt);
+                    if (r === "error") return;
+                    if (r) donePayload = r;
+                },
+            );
+            if (!donePayload) {
+                alert(t("home.alertTextGenerateError"));
                 return;
             }
-            if (data.status === "error") {
-                alert(typeof data.message === "string" ? data.message : "Eroare la generare.");
-                return;
-            }
-            const tf2 = typeof data.text_final_audio === "string" ? data.text_final_audio : "";
-            const now2 = Date.now();
-            const carteNoua = {
-                id: data.id ?? Date.now(),
-                titlu: titluText,
-                url_sursa: "Text Adăugat Manual",
-                status: data.status,
-                link_audio: data.link_audio,
-                text_extras: data.text_final_audio,
-                data_generare: new Date().toLocaleDateString("ro-RO"),
-                is_public: Boolean(data.is_public),
-                creat_la_ts: now2,
-                lungime_text: tf2.length,
-            };
-            setIstoricCarti((cartiVechi) => [carteNoua, ...cartiVechi]);
-            setCarteaCurenta(carteNoua);
-            setShowTextEditor(false);
-            window.dispatchEvent(new Event("reseteaza-meniu"));
-        } catch (error) {
-            alert("Eroare la generarea textului.");
+            success = true;
+            finalizeCarteFromStream(donePayload, { titlu: titluText, url_sursa: t("home.manualSourceValue") });
+        } catch (err) {
+            const msg = err instanceof Error && err.message ? err.message : t("home.alertTextGenerateError");
+            alert(msg);
         } finally {
-            setIsLoading(false); setTitluText(""); setTextManual("");
+            setIsLoading(false);
+            if (success) {
+                setTitluText("");
+                setTextManual("");
+            }
+            if (!success) {
+                setGenPhase(null);
+                setGenSegments([]);
+                setGenSegmentsTotal(null);
+                setGenActiveSegment(null);
+            }
         }
     };
 
@@ -310,7 +419,7 @@ export default function Home() {
             });
             const j = await res.json().catch(() => ({}));
             if (!res.ok) {
-                alert(typeof j.detail === "string" ? j.detail : "Nu s-a putut actualiza vizibilitatea.");
+                alert(typeof j.detail === "string" ? j.detail : t("home.alertPublicError"));
                 return;
             }
             setIstoricCarti((prev) =>
@@ -320,7 +429,7 @@ export default function Home() {
                 setCarteaCurenta({ ...carteaCurenta, is_public: !carte.is_public });
             }
         } catch {
-            alert("Eroare de rețea.");
+            alert(t("home.alertNetworkError"));
         }
     };
 
@@ -328,7 +437,7 @@ export default function Home() {
         e.stopPropagation();
         navigator.clipboard.writeText(link);
         setMeniuDeschisId(null);
-        setToastMessage("Link-ul audio a fost copiat!");
+        setToastMessage(t("home.linkCopied"));
         setTimeout(() => setToastMessage(null), 3000);
     };
 
@@ -369,7 +478,7 @@ export default function Home() {
             setIstoricCarti(istoricCarti.map((c) => c.id === carteDeRedenumit.id ? { ...c, titlu: titluNou } : c));
             setModalRedenumire(false);
         } catch {
-            alert("Eroare la redenumire.");
+            alert(t("home.alertRenameError"));
         }
     };
 
@@ -396,7 +505,7 @@ export default function Home() {
             setModalStergere(false);
             setCarteDeSters(null);
         } catch {
-            alert("Eroare la ștergere.");
+            alert(t("home.alertDeleteError"));
         }
     };
 
@@ -506,7 +615,7 @@ export default function Home() {
                         onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
                     >
                         <span className="mr-2 text-base transition-transform duration-200 group-hover:-translate-x-1">←</span>
-                        Înapoi la Bibliotecă
+                        {t("home.backToLibrary")}
                     </button>
 
                     <div className="mb-8" style={{ borderBottom: "1px solid var(--divider)", paddingBottom: "1.5rem" }}>
@@ -516,8 +625,8 @@ export default function Home() {
                         >
                             {carteaCurenta.titlu}
                         </h2>
-                        {carteaCurenta.url_sursa === "Text Adăugat Manual" ? (
-                            <span className="text-sm font-medium" style={{ color: "var(--text-muted)" }}>Sursă: Text Adăugat Manual</span>
+                        {carteaCurenta.url_sursa === t("home.manualSourceValue") ? (
+                            <span className="text-sm font-medium" style={{ color: "var(--text-muted)" }}>{t("home.sourceManual")}</span>
                         ) : (
                             <a
                                 href={carteaCurenta.url_sursa}
@@ -528,23 +637,36 @@ export default function Home() {
                                 onMouseEnter={(e) => (e.currentTarget.style.color = "var(--heading-on-surface)")}
                                 onMouseLeave={(e) => (e.currentTarget.style.color = "var(--link-accent)")}
                             >
-                                Deschide sursa originală <span className="ml-1 text-xs">↗</span>
+                                {t("home.openOriginal")} <span className="ml-1 text-xs">↗</span>
                             </a>
                         )}
                     </div>
 
                     <div
-                        className="p-8 rounded-2xl mb-8 flex items-center justify-center"
+                        className="p-8 rounded-2xl mb-8"
                         style={{
                             background: "linear-gradient(135deg, var(--player-well-a) 0%, var(--player-well-b) 100%)",
                             boxShadow: "var(--shadow-player-inset)",
                             border: "1px solid var(--border-card)",
                         }}
                     >
-                        <audio controls className="w-full max-w-2xl" autoPlay>
-                            <source src={carteaCurenta.link_audio} type="audio/mpeg" />
-                            Browser-ul tău nu suportă elementul audio.
-                        </audio>
+                        {libSegments.length > 0 ? (
+                            <GenerationPlaylist
+                                segments={libSegments}
+                                phase={null}
+                                segmentsTotal={libSegments.length}
+                                playlistMode={libPlaylistMode}
+                                activeIndex={genActiveSegment}
+                                onActiveChange={setGenActiveSegment}
+                                isGuestPreview={Boolean(carteaCurenta.is_guest_preview)}
+                                onGuestPreviewFinished={() => setShowGuestSignupPrompt(true)}
+                            />
+                        ) : (
+                            <audio controls className="w-full max-w-2xl" preload="metadata">
+                                <source src={carteaCurenta.link_audio} type="audio/mpeg" />
+                                {t("home.audioUnsupported")}
+                            </audio>
+                        )}
                     </div>
 
                     <div>
@@ -552,7 +674,7 @@ export default function Home() {
                             className="font-extrabold text-xs uppercase tracking-widest mb-4"
                             style={{ color: "var(--text-muted)" }}
                         >
-                            Text Extras
+                            {t("home.extractedText")}
                         </h3>
                         <div
                             className="p-6 rounded-2xl h-96 overflow-y-auto"
@@ -586,7 +708,7 @@ export default function Home() {
                         <div className="flex justify-center mb-8">
                             <input
                                 type="text"
-                                placeholder="Titlul materialului"
+                                placeholder={t("home.materialTitlePlaceholder")}
                                 className="w-3/4 max-w-md p-2 text-xl font-extrabold bg-transparent text-center placeholder-[var(--text-faint)] transition-colors duration-200"
                                 style={{
                                     borderBottom: "2px solid var(--input-border)",
@@ -601,12 +723,64 @@ export default function Home() {
                         </div>
 
                         <textarea
-                            placeholder="Tastează, lipește sau editează textul aici..."
+                            placeholder={t("home.textPlaceholder")}
                             className="w-full flex-1 border-0 p-4 resize-none leading-relaxed text-lg bg-transparent"
                             style={{ color: "var(--text-body)", outline: "none" }}
                             value={textManual}
                             onChange={(e) => setTextManual(e.target.value)}
                         />
+
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs font-semibold" style={{ color: "var(--text-muted)" }}>
+                            <span>
+                                {t("home.charCount")}: {textManual.length}
+                                {isGuestSession()
+                                    ? ` / ${guestCredits?.credits_per_job_max ?? GUEST_JOB_MAX_CHARS} ${t("home.guestPerJobMax").toLowerCase()}`
+                                    : ""}
+                            </span>
+                            {isGuestSession() ? (
+                                <span>
+                                    {t("home.guestCredits")}: {guestCredits?.credits_remaining ?? GUEST_PREVIEW_CHARS}
+                                    {` / ${guestCredits?.credits_total ?? GUEST_PREVIEW_CHARS}`}
+                                </span>
+                            ) : null}
+                        </div>
+                        {isGuestSession() && textManual.length > GUEST_PREVIEW_CHARS ? (
+                            <p className="mt-1 px-1 text-xs font-medium" style={{ color: "var(--text-muted)" }}>
+                                {t("gen.guestPreviewHint")}
+                            </p>
+                        ) : null}
+
+                        <label
+                            className="mt-3 flex items-start gap-3 px-1 cursor-pointer select-none"
+                            style={{ color: "var(--text-muted)" }}
+                        >
+                            <input
+                                type="checkbox"
+                                checked={curataCuGemini}
+                                onChange={(e) => setCurataCuGemini(e.target.checked)}
+                                disabled={isLoading}
+                                className="mt-0.5 h-4 w-4 rounded accent-[#408A71]"
+                            />
+                            <span className="text-sm leading-snug">
+                                <span className="font-semibold block" style={{ color: "var(--text-primary)" }}>
+                                    {t("home.cleanWithAi")}
+                                </span>
+                                {t("home.cleanWithAiHint")}
+                            </span>
+                        </label>
+
+                        {(isLoading || genSegments.length > 0 || genPhase) ? (
+                            <GenerationPlaylist
+                                segments={genSegments}
+                                phase={genPhase}
+                                segmentsTotal={genSegmentsTotal}
+                                playlistMode={genPlaylistMode}
+                                activeIndex={genActiveSegment}
+                                onActiveChange={setGenActiveSegment}
+                                isGuestPreview={isGuestPreviewGen}
+                                onGuestPreviewFinished={() => setShowGuestSignupPrompt(true)}
+                            />
+                        ) : null}
 
                         <div
                             className="mt-6 pt-6 flex justify-center"
@@ -632,7 +806,7 @@ export default function Home() {
                                 }}
                                 onMouseDown={(e) => { if (!isLoading) e.currentTarget.style.transform = "scale(0.98)"; }}
                             >
-                                {isLoading ? "Se Generează..." : "▶ Generează Audio"}
+                                {isLoading ? t("home.generating") : t("home.generateAudio")}
                             </button>
                         </div>
                     </div>
@@ -646,10 +820,10 @@ export default function Home() {
                         <div className="mt-[-10vh] text-center" style={{ animation: "fade-in 0.4s ease-out" }}>
                             <div className="text-6xl mb-6 grayscale opacity-30">📚</div>
                             <h1 className="text-4xl font-extrabold mb-3" style={{ color: "var(--text-primary)" }}>
-                                Rafturile tale sunt goale.
+                                {t("home.emptyShelves")}
                             </h1>
                             <p className="text-base font-medium max-w-sm mx-auto" style={{ color: "var(--heading-on-surface)", lineHeight: 1.7 }}>
-                                Folosește meniul din stânga pentru a adăuga prima ta carte.
+                                {t("home.emptyShelvesHint")}
                             </p>
                         </div>
                     ) : (
@@ -659,7 +833,7 @@ export default function Home() {
                         >
                             <div className="mb-6 w-full">
                                 <h1 className="text-3xl font-extrabold tracking-tight" style={{ color: "var(--heading-on-surface)" }}>
-                                    Biblioteca Mea
+                                    {t("home.myLibrary")}
                                 </h1>
                                 <div
                                     className="mt-1.5 h-0.5 w-12 rounded-full"
@@ -765,7 +939,7 @@ export default function Home() {
                                                         className="rounded border accent-mid-green"
                                                         style={{ borderColor: "var(--input-border)" }}
                                                     />
-                                                    <span>Public</span>
+                                                    <span>{t("home.public")}</span>
                                                 </label>
                                             )}
                                             {/* Kebab menu button */}
@@ -797,9 +971,9 @@ export default function Home() {
                                                     }}
                                                 >
                                                     {[
-                                                        { label: "Redenumește", icon: "✎", action: (e: React.MouseEvent) => deschideRedenumire(e, carte) },
-                                                        { label: "Descarcă MP3", icon: "↓", action: (e: React.MouseEvent) => handleDownload(e, carte.link_audio, carte.titlu) },
-                                                        { label: "Distribuie link", icon: "⎘", action: (e: React.MouseEvent) => handleShare(e, carte.link_audio) },
+                                                        { label: t("home.menuRename"), icon: "✎", action: (e: React.MouseEvent) => deschideRedenumire(e, carte) },
+                                                        { label: t("home.menuDownload"), icon: "↓", action: (e: React.MouseEvent) => handleDownload(e, carte.link_audio, carte.titlu) },
+                                                        { label: t("home.menuShare"), icon: "⎘", action: (e: React.MouseEvent) => handleShare(e, carte.link_audio) },
                                                     ].map((item) => (
                                                         <button
                                                             key={item.label}
@@ -839,7 +1013,7 @@ export default function Home() {
                                                         }}
                                                     >
                                                         <span className="mr-3 opacity-60">📁</span>
-                                                        Mută în dosar
+                                                        {t("home.moveToFolder")}
                                                     </button>
                                                     <div className="my-1" style={{ borderTop: "1px solid var(--divider)" }} />
                                                     <button
@@ -856,7 +1030,7 @@ export default function Home() {
                                                         }}
                                                     >
                                                         <span className="mr-3 opacity-60">✕</span>
-                                                        Șterge document
+                                                        {t("home.deleteDocument")}
                                                     </button>
                                                 </div>
                                             )}
@@ -907,7 +1081,7 @@ export default function Home() {
                                                 <span
                                                     className="flex items-center transition-all duration-150 group-hover:translate-x-0.5"
                                                 >
-                                                    Ascultă <span className="ml-1">▶</span>
+                                                    {t("home.listen")} <span className="ml-1">▶</span>
                                                 </span>
                                             </div>
                                         </div>
@@ -950,7 +1124,7 @@ export default function Home() {
                                                     className="rounded border accent-mid-green scale-90"
                                                     style={{ borderColor: "var(--input-border)" }}
                                                 />
-                                                <span>Public</span>
+                                                <span>{t("home.public")}</span>
                                             </label>
                                         )}
                                         <button
@@ -980,9 +1154,9 @@ export default function Home() {
                                                 }}
                                             >
                                                 {[
-                                                    { label: "Redenumește", icon: "✎", action: (e: React.MouseEvent) => deschideRedenumire(e, carte) },
-                                                    { label: "Descarcă MP3", icon: "↓", action: (e: React.MouseEvent) => handleDownload(e, carte.link_audio, carte.titlu) },
-                                                    { label: "Distribuie link", icon: "⎘", action: (e: React.MouseEvent) => handleShare(e, carte.link_audio) },
+                                                    { label: t("home.menuRename"), icon: "✎", action: (e: React.MouseEvent) => deschideRedenumire(e, carte) },
+                                                    { label: t("home.menuDownload"), icon: "↓", action: (e: React.MouseEvent) => handleDownload(e, carte.link_audio, carte.titlu) },
+                                                    { label: t("home.menuShare"), icon: "⎘", action: (e: React.MouseEvent) => handleShare(e, carte.link_audio) },
                                                 ].map((item) => (
                                                     <button
                                                         key={item.label}
@@ -1023,7 +1197,7 @@ export default function Home() {
                                                     }}
                                                 >
                                                     <span className="mr-3 opacity-60">📁</span>
-                                                    Mută în dosar
+                                                    {t("home.moveToFolder")}
                                                 </button>
                                                 <div className="my-1" style={{ borderTop: "1px solid var(--divider)" }} />
                                                 <button
@@ -1041,7 +1215,7 @@ export default function Home() {
                                                     }}
                                                 >
                                                     <span className="mr-3 opacity-60">✕</span>
-                                                    Șterge document
+                                                    {t("home.deleteDocument")}
                                                 </button>
                                             </div>
                                         )}
@@ -1103,14 +1277,14 @@ export default function Home() {
                         }}
                     >
                         <div className="mb-1">
-                            <h2 className="text-2xl font-extrabold" style={{ color: "var(--heading-on-surface)" }}>Procesare URL</h2>
+                            <h2 className="text-2xl font-extrabold" style={{ color: "var(--heading-on-surface)" }}>{t("home.urlModalTitle")}</h2>
                         </div>
                         <p className="text-sm font-medium mb-6" style={{ color: "var(--text-muted)" }}>
-                            Introdu link-ul articolului. AI-ul va curăța automat reclamele și meniurile.
+                            {t("home.urlModalBody")}
                         </p>
 
                         <label className="block text-xs font-extrabold uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)" }}>
-                            Link-ul paginii web
+                            {t("home.urlLabel")}
                         </label>
                         <input
                             type="text"
@@ -1149,9 +1323,22 @@ export default function Home() {
                                 onChange={(e) => setForceRegenerate(e.target.checked)}
                             />
                             <span className="text-sm font-semibold" style={{ color: "var(--heading-on-surface)" }}>
-                                Forțează regenerarea AI
+                                {t("home.forceRegenerate")}
                             </span>
                         </label>
+
+                        {(isLoading || genSegments.length > 0 || genPhase) ? (
+                            <GenerationPlaylist
+                                segments={genSegments}
+                                phase={genPhase}
+                                segmentsTotal={genSegmentsTotal}
+                                playlistMode={genPlaylistMode}
+                                activeIndex={genActiveSegment}
+                                onActiveChange={setGenActiveSegment}
+                                isGuestPreview={isGuestPreviewGen}
+                                onGuestPreviewFinished={() => setShowGuestSignupPrompt(true)}
+                            />
+                        ) : null}
 
                         <div className="flex justify-end space-x-3">
                             <button
@@ -1162,7 +1349,7 @@ export default function Home() {
                                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-bg)")}
                                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
                             >
-                                Anulează
+                                {t("library.modalCancel")}
                             </button>
                             <button
                                 onClick={handleGenereaza}
@@ -1179,7 +1366,7 @@ export default function Home() {
                                     e.currentTarget.style.boxShadow = "var(--shadow-btn-primary)";
                                 }}
                             >
-                                {isLoading ? "AI-ul citește..." : "Generează Audio"}
+                                {isLoading ? t("home.aiReading") : t("home.generateAudioShort")}
                             </button>
                         </div>
                     </div>
@@ -1205,7 +1392,7 @@ export default function Home() {
                         }}
                     >
                         <h2 className="text-xl font-extrabold mb-4" style={{ color: "var(--heading-on-surface)" }}>
-                            Redenumește cartea
+                            {t("home.renameTitle")}
                         </h2>
                         <input
                             type="text"
@@ -1237,7 +1424,7 @@ export default function Home() {
                                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-bg)")}
                                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
                             >
-                                Anulează
+                                {t("library.modalCancel")}
                             </button>
                             <button
                                 onClick={salveazaRedenumire}
@@ -1249,7 +1436,7 @@ export default function Home() {
                                 onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "var(--shadow-btn-sm-hover)")}
                                 onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "var(--shadow-btn-sm)")}
                             >
-                                Salvează
+                                {t("home.save")}
                             </button>
                         </div>
                     </div>
@@ -1294,7 +1481,7 @@ export default function Home() {
                             style={{ borderBottom: "1px solid var(--divider)" }}
                         >
                             <h2 className="text-base font-extrabold" style={{ color: "var(--heading-on-surface)" }}>
-                                Șterge Documentul
+                                {t("home.deleteDocTitle")}
                             </h2>
                             <button
                                 onClick={() => { setModalStergere(false); setCarteDeSters(null); }}
@@ -1309,7 +1496,7 @@ export default function Home() {
 
                         <div className="p-6 text-center">
                             <p className="font-medium mb-6 text-sm" style={{ color: "var(--text-body)" }}>
-                                Ești sigur că vrei să ștergi?
+                                {t("home.deleteConfirm")}
                             </p>
                             <button
                                 onClick={confirmaStergerea}
@@ -1327,7 +1514,7 @@ export default function Home() {
                                     e.currentTarget.style.boxShadow = "var(--shadow-btn-destructive)";
                                 }}
                             >
-                                Șterge
+                                {t("home.delete")}
                             </button>
                         </div>
                     </div>
@@ -1361,7 +1548,7 @@ export default function Home() {
                             className="text-xl font-extrabold mb-1"
                             style={{ color: "var(--heading-on-surface)" }}
                         >
-                            Mută în dosar
+                            {t("home.moveToFolderTitle")}
                         </h2>
                         <p className="text-sm font-medium mb-5 truncate" style={{ color: "var(--text-muted)" }} title={mutaCarteTarget.titlu}>
                             {mutaCarteTarget.titlu}
@@ -1377,7 +1564,7 @@ export default function Home() {
                                     color: "var(--text-body)",
                                 }}
                             >
-                                Fără dosar (eliberează)
+                                {t("home.unfiledRelease")}
                             </button>
                             {folders.map((fd) => (
                                 <button
@@ -1409,9 +1596,35 @@ export default function Home() {
                                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-bg)")}
                                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
                             >
-                                Închide
+                                {t("home.close")}
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+            {showGuestSignupPrompt && (
+                <div
+                    className="fixed inset-0 flex items-center justify-center z-[60] p-4"
+                    style={{ background: "var(--overlay-scrim)", backdropFilter: "blur(6px)" }}
+                >
+                    <div
+                        className="p-8 rounded-3xl w-full max-w-md text-center"
+                        style={{ background: "var(--card-bg)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}
+                    >
+                        <h2 className="text-xl font-extrabold mb-3" style={{ color: "var(--heading-on-surface)" }}>
+                            {t("gen.guestPreviewDoneTitle")}
+                        </h2>
+                        <p className="text-sm mb-6" style={{ color: "var(--text-muted)" }}>
+                            {t("gen.guestPreviewDoneBody")}
+                        </p>
+                        <button
+                            type="button"
+                            className="px-6 py-3 rounded-full text-white font-bold text-sm"
+                            style={{ background: "linear-gradient(135deg, #408A71, #285A48)" }}
+                            onClick={() => { setShowGuestSignupPrompt(false); router.push("/login"); }}
+                        >
+                            {t("gen.guestPreviewSignup")}
+                        </button>
                     </div>
                 </div>
             )}

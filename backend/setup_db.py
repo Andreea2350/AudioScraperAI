@@ -28,7 +28,6 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 UTILIZATORI = [
     {"email": "admin@audioscraper.ro", "parola": "Admin@1234",  "rol": "admin"},
     {"email": "user@audioscraper.ro",  "parola": "User@1234",   "rol": "user"},
-    {"email": "guest@audioscraper.ro", "parola": "Guest@1234",  "rol": "guest"},
 ]
 
 SQL_MIGRATION = """
@@ -37,7 +36,7 @@ CREATE TABLE IF NOT EXISTS utilizatori (
     id          SERIAL PRIMARY KEY,
     email       TEXT UNIQUE NOT NULL,
     parola_hash TEXT NOT NULL,
-    rol         TEXT NOT NULL CHECK (rol IN ('admin', 'user', 'guest')),
+    rol         TEXT NOT NULL CHECK (rol IN ('admin', 'user')),
     creat_la    TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -131,7 +130,6 @@ def main():
     print("\nCredentiale de test:")
     print("  Admin : admin@audioscraper.ro  / Admin@1234")
     print("  User  : user@audioscraper.ro   / User@1234")
-    print("  Guest : guest@audioscraper.ro  / Guest@1234")
     print("\n[!] Schimba parolele dupa primul login!")
 
 

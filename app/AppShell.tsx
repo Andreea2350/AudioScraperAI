@@ -5,9 +5,11 @@
  * (fara chrome). Redirectioneaza la /intro daca nu exista token pe rute private.
  */
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { API_BASE, authHeadersMultipart, clearAuthSession } from "@/lib/api";
-import { DOCUMENT_FILE_ACCEPT, IMAGE_FILE_ACCEPT } from "@/lib/fileUploadAccept";
+import { API_BASE, authHeadersMultipart, clearAuthSession, isGuestSession } from "@/lib/api";
+import { DOCUMENT_FILE_ACCEPT, IMAGE_FILE_ACCEPT, isImageUploadFile } from "@/lib/fileUploadAccept";
+import { useI18n } from "@/lib/i18n";
 import { LibraryNewFolderButton } from "@/components/LibraryNewFolderButton";
 import { LibrarySearchByFlyout } from "@/components/LibrarySearchByFlyout";
 import { LibrarySortFilterFlyout } from "@/components/LibrarySortFilterFlyout";
@@ -15,6 +17,7 @@ import { LibraryViewModeToggle } from "@/components/LibraryViewModeToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
+    const { t } = useI18n();
     const pathname = usePathname();
     const router = useRouter();
     const isPublicPage =
@@ -107,6 +110,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     const incarcaFisierSiDeschideEditor = async (file: File | undefined) => {
         if (!file) return;
+        if (isGuestSession() && isImageUploadFile(file)) {
+            setDocUploadError(t("shell.imageLocked"));
+            return;
+        }
         setDocUploadLoading(true);
         setDocUploadError(null);
         try {
@@ -122,12 +129,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 const msg =
                     typeof data.detail === "string"
                         ? data.detail
-                        : "Nu s-a putut citi fișierul.";
+                        : t("shell.uploadFileError");
                 setDocUploadError(msg);
                 return;
             }
             if (data.status !== "success" || !data.text) {
-                setDocUploadError("Răspuns neașteptat de la server.");
+                setDocUploadError(t("shell.uploadUnexpected"));
                 return;
             }
             const detail = {
@@ -140,7 +147,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             setIsUploadOpen(false);
             setDocUploadError(null);
         } catch {
-            setDocUploadError("Nu s-a putut conecta la server.");
+            setDocUploadError(t("shell.uploadNetworkError"));
         } finally {
             setDocUploadLoading(false);
         }
@@ -188,6 +195,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         return "w-full flex items-center p-3 rounded-xl hover:bg-white/10 transition-all duration-200 text-left text-white/80 hover:text-white border-l-[3px] border-transparent";
     };
 
+    const isGuest = userRol === "guest";
+
     if (isPublicPage) {
         return <>{children}</>;
     }
@@ -217,14 +226,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         AudioScraper<span style={{ color: "#B0E4CC" }}>AI</span>
                     </div>
                     <div className="mt-0.5 text-[11px] font-medium" style={{ color: "rgba(176,228,204,0.5)" }}>
-                        Platforma ta audio
+                        {t("shell.tagline")}
                     </div>
                 </button>
 
                 <nav className="mt-4 flex-1 space-y-1 px-3 text-sm font-medium">
                     <button type="button" onClick={apasaAdaugaText} className={stilButonNavigare("text")}>
                         <span className="mr-3 text-base opacity-80">✎</span>
-                        <span>Adaugă Text</span>
+                        <span>{t("shell.addText")}</span>
                     </button>
 
                     <div className="relative">
@@ -262,7 +271,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                             }`}
                         >
                             <span className="mr-3 text-base opacity-80">↑</span>
-                            <span>Încarcă Document</span>
+                            <span>{t("shell.uploadDocument")}</span>
                         </button>
 
                         {isUploadOpen && (
@@ -284,7 +293,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                     }}
                                 >
                                     <span className="text-sm font-extrabold" style={{ color: "var(--text-primary)" }}>
-                                        Adaugă Sursă
+                                        {t("shell.addSource")}
                                     </span>
                                     <button
                                         type="button"
@@ -311,7 +320,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                     )}
                                     {docUploadLoading && (
                                         <div className="mx-2 mb-1 px-3 py-2 text-xs font-bold text-mid-green">
-                                            Se extrage textul…
+                                            {t("shell.extractingText")}
                                         </div>
                                     )}
                                     <button
@@ -337,10 +346,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                         </div>
                                         <div>
                                             <div className="mb-0.5 text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                                                Document
+                                                {t("shell.document")}
                                             </div>
                                             <div className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                                                PDF, DOCX sau TXT din calculator.
+                                                {t("shell.documentDesc")}
                                             </div>
                                         </div>
                                     </button>
@@ -349,31 +358,58 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                         type="button"
                                         disabled={docUploadLoading}
                                         onClick={() => {
+                                            if (isGuest) {
+                                                setDocUploadError(t("shell.imageLocked"));
+                                                return;
+                                            }
                                             setDocUploadError(null);
                                             imageFileRef.current?.click();
                                         }}
-                                        className="group flex w-full items-start rounded-xl p-3 text-left transition-colors disabled:opacity-50"
+                                        className={`group flex w-full items-center rounded-xl p-3 text-left transition-colors disabled:opacity-50 ${
+                                            isGuest ? "cursor-not-allowed opacity-75" : ""
+                                        }`}
                                         style={{ color: "var(--text-body)" }}
                                         onMouseEnter={(e) => {
+                                            if (isGuest) return;
                                             e.currentTarget.style.backgroundColor = "var(--hover-bg)";
                                         }}
                                         onMouseLeave={(e) => {
                                             e.currentTarget.style.backgroundColor = "transparent";
                                         }}
                                     >
-                                        <div className="mt-1 mr-4 text-[var(--text-faint)] transition-colors group-hover:text-mid-green">
+                                        <div className="mr-4 shrink-0 text-[var(--text-faint)] transition-colors group-hover:text-mid-green">
                                             <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                                             </svg>
                                         </div>
-                                        <div>
-                                            <div className="mb-0.5 text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                                                Imagine
+                                        <div className="min-w-0 flex-1">
+                                            <div className="mb-0.5 flex items-center gap-1.5 text-sm font-bold" style={{ color: "var(--text-primary)" }}>
+                                                <span>{t("shell.image")}</span>
+                                                {isGuest ? (
+                                                    <span
+                                                        className="text-[10px] font-extrabold uppercase tracking-wide rounded-full px-2 py-0.5"
+                                                        style={{
+                                                            background: "rgba(196,147,63,0.12)",
+                                                            color: "#C4933F",
+                                                        }}
+                                                    >
+                                                        {t("shell.imageBadgeAccount")}
+                                                    </span>
+                                                ) : null}
                                             </div>
                                             <div className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                                                PNG, JPG — text extras cu AI (necesită Gemini).
+                                                {isGuest ? t("shell.imageDescLocked") : t("shell.imageDesc")}
                                             </div>
                                         </div>
+                                        {isGuest ? (
+                                            <span
+                                                className="ml-3 shrink-0 text-base leading-none opacity-60"
+                                                style={{ color: "var(--text-muted)" }}
+                                                aria-hidden
+                                            >
+                                                🔒
+                                            </span>
+                                        ) : null}
                                     </button>
 
                                     <button
@@ -395,10 +431,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                         </div>
                                         <div>
                                             <div className="mb-0.5 text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                                                Link Pagină Web
+                                                {t("shell.webLink")}
                                             </div>
                                             <div className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                                                Extrage și ascultă textul dintr-un articol de pe internet.
+                                                {t("shell.webLinkDesc")}
                                             </div>
                                         </div>
                                     </button>
@@ -409,7 +445,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
                     <button type="button" onClick={apasaBiblioteca} className={stilButonNavigare("biblioteca")}>
                         <span className="mr-3 text-base">🕮</span>
-                        <span>Bibliotecă</span>
+                        <span>{t("shell.library")}</span>
                     </button>
 
                     <div className="my-4" style={{ borderTop: "1px solid rgba(176,228,204,0.12)" }} />
@@ -425,17 +461,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                             }`}
                         >
                             <span className="mr-3 text-base">⚙</span>
-                            <span>Mai multe funcții {maiMulteOpen ? "▴" : "▾"}</span>
+                            <span>{t("shell.moreFeatures")} {maiMulteOpen ? "▴" : "▾"}</span>
                         </button>
                             {maiMulteOpen && (
                             <div className="mt-1 ml-2 space-y-0.5 border-l-2 border-white/15 pl-3">
                                 <button type="button" onClick={apasaListaRedare} className={stilButonNavigare("lista-redare")}>
                                     <span className="mr-3 text-base opacity-80">≡</span>
-                                    <span>Lista de redare</span>
+                                    <span>{t("shell.playlist")}</span>
                                 </button>
                                 <button type="button" onClick={apasaSetari} className={stilButonNavigare("setari")}>
                                     <span className="mr-3 text-base opacity-80">⚙</span>
-                                    <span>Setări</span>
+                                    <span>{t("shell.settings")}</span>
                                 </button>
                             </div>
                             )}
@@ -463,14 +499,44 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         {libraryHeaderReady && pathname === "/" && <LibraryViewModeToggle />}
                         <ThemeToggle />
                     </div>
-                    <div className="relative flex items-center gap-0.5" ref={accountMenuRef}>
+                    <div className="relative flex items-center gap-0.5 shrink-0" ref={accountMenuRef}>
+                        {userRol === "guest" ? (
+                            <div className="flex items-center gap-2">
+                                <Link
+                                    href="/login"
+                                    className="px-4 py-2 rounded-xl text-sm font-bold transition-colors"
+                                    style={{ color: "var(--text-muted)" }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.color = "var(--text-primary)";
+                                        e.currentTarget.style.backgroundColor = "var(--hover-bg)";
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.color = "var(--text-muted)";
+                                        e.currentTarget.style.backgroundColor = "transparent";
+                                    }}
+                                >
+                                    {t("intro.auth")}
+                                </Link>
+                                <Link
+                                    href="/login?inregistrare=1"
+                                    className="px-4 py-2 rounded-xl text-sm font-extrabold text-white transition-transform hover:scale-[1.02]"
+                                    style={{
+                                        background: "linear-gradient(135deg, #408A71, #285A48)",
+                                        boxShadow: "var(--shadow-btn-sm)",
+                                    }}
+                                >
+                                    {t("intro.register")}
+                                </Link>
+                            </div>
+                        ) : (
+                        <>
                         <button
                             type="button"
                             onClick={() => {
                                 setAccountMenuOpen(false);
                                 apasaSetari();
                             }}
-                            aria-label="Deschide setările contului"
+                            aria-label={t("shell.openSettingsAria")}
                             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-extrabold text-white transition-transform duration-150 hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-mid-green focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--header-bar-bg)]"
                             style={{
                                 background: "linear-gradient(135deg, #408A71, #285A48)",
@@ -479,16 +545,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         >
                             {userEmail && userEmail.trim()
                                 ? userEmail.slice(0, 2).toUpperCase()
-                                : userRol === "guest"
-                                  ? "GS"
-                                  : "?"}
+                                : "?"}
                         </button>
                         <button
                             type="button"
                             onClick={() => setAccountMenuOpen((o) => !o)}
                             aria-expanded={accountMenuOpen}
                             aria-haspopup="dialog"
-                            aria-label="Meniul contului (deconectare)"
+                            aria-label={t("shell.accountMenuAria")}
                             className="flex h-9 w-7 shrink-0 items-center justify-center rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-mid-green focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--header-bar-bg)]"
                             style={{ color: "var(--text-muted)" }}
                         >
@@ -517,7 +581,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                     animation: "fade-in 0.2s ease-out",
                                 }}
                                 role="dialog"
-                                aria-label="Cont utilizator"
+                                aria-label={t("shell.account")}
                             >
                                 <div
                                     className="border-b px-4 py-3"
@@ -527,7 +591,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                         className="text-[10px] font-extrabold uppercase tracking-widest"
                                         style={{ color: "var(--text-muted)" }}
                                     >
-                                        Cont
+                                        {t("shell.account")}
                                     </p>
                                     <p
                                         className="mt-1 truncate text-sm font-bold"
@@ -537,8 +601,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                         {userEmail?.trim()
                                             ? userEmail
                                             : userRol === "guest"
-                                              ? "Oaspete"
-                                              : "Utilizator"}
+                                              ? t("shell.guest")
+                                              : t("shell.user")}
                                     </p>
                                     {userRol ? (
                                         <span
@@ -567,7 +631,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                         className="px-3 py-1.5 text-[11px] font-medium leading-snug"
                                         style={{ color: "var(--text-muted)" }}
                                     >
-                                        Avatarul deschide setările. Aici te poți deconecta.
+                                        {t("shell.accountMenuHint")}
                                     </p>
                                     <button
                                         type="button"
@@ -587,10 +651,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                             router.push("/intro");
                                         }}
                                     >
-                                        Deconectare
+                                        {t("shell.logout")}
                                     </button>
                                 </div>
                             </div>
+                        )}
+                        </>
                         )}
                     </div>
                 </header>

@@ -13,3 +13,5 @@ frontend/CLAUDE.md
 #Fisiere audio
 *.mp3
 *.wav
+.vercel
+node_modules

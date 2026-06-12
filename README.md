@@ -4,47 +4,34 @@ AudioScraperAI este o aplicație full-stack care transformă conținut text (URL
 
 ## Ce face proiectul
 
-- extrage text din pagini web;
-- extrage text din fișiere (`PDF`, `DOCX`, `EPUB`, `TXT`, imagini);
-- curăță și normalizează textul cu Gemini;
-- sintetizează voce în limba română (edge-tts / gTTS);
-- salvează audio în Supabase Storage;
-- salvează metadate în Supabase Postgres;
-- oferă bibliotecă per utilizator + pagină publică de prezentare.
+- extrage text din pagini web și din fișiere (`PDF`, `DOCX`, `EPUB`, `TXT`, imagini);
+- curăță și normalizează textul cu Gemini (opțional pentru text lipit manual);
+- sintetizează voce în limba română (edge-tts / gTTS), cu tăiere inteligentă pe propoziții;
+- generează audio **pe părți** (playlist live) pentru text, URL și fișiere;
+- pentru texte foarte lungi (≥ 50.000 caractere), detectează **capitole** în playlist;
+- salvează segmentele + MP3 final în Supabase Storage;
+- oferă bibliotecă per utilizator, redare din playlist în aplicație, descărcare MP3 complet;
+- suport **oaspete** cu previzualizare gratuită (primele ~5.000 caractere).
 
-## Tehnologii folosite
+## Tehnologii
 
 - **Frontend:** Next.js (App Router), React, TypeScript, Tailwind CSS
 - **Backend:** FastAPI, Python
 - **Database / Storage:** Supabase (Postgres + Storage)
-- **AI:** Google Gemini (curățare text, titlu)
+- **AI:** Google Gemini
 - **TTS:** edge-tts (implicit) / gTTS (fallback)
-- **Auth app-level:** JWT emis de backend și trimis ca `Authorization: Bearer ...`
+- **Auth:** JWT emis de backend (`Authorization: Bearer ...`)
 
-## Cum este construit (pe scurt)
+## Structura repo
 
-1. Frontend-ul trimite cereri la API-ul FastAPI.
-2. Backend-ul:
-   - validează token-ul,
-   - identifică utilizatorul curent,
-   - aplică scoping pe `carti` (în principal prin `user_id`).
-3. Pentru generare audio:
-   - extragere text brut,
-   - curățare AI,
-   - sinteză audio,
-   - upload MP3 în Storage,
-   - insert/update metadate în Postgres.
-
-## Structura repo (relevantă)
-
-- `frontend/` – aplicația Next.js
+- `app/`, `lib/`, `components/` – aplicația Next.js (deploy Vercel din rădăcina repo-ului)
+- `frontend/` – copie sincronizată pentru development / Docker
 - `backend/` – API FastAPI + pipeline AI/TTS
-- `supabase/migrations/` – migrări SQL
-- `documentation/` – documentație detaliată (arhitectură, API, roluri, pipeline)
+- `api/` – intrare Python pentru Vercel (`/api/*`)
 
-## Setup rapid
+## Setup local
 
-### 1) Backend
+### Backend
 
 ```bash
 cd backend
@@ -52,58 +39,90 @@ python -m pip install -r requirements.txt
 python __main__.py
 ```
 
-Backend rulează implicit pe `http://127.0.0.1:8765`.
+Rulează pe `http://127.0.0.1:8765`.
 
-### 2) Frontend
+### Frontend
 
 ```bash
-cd frontend
 npm install
 npm run dev
 ```
 
-Frontend rulează implicit pe `http://localhost:3001`.
+Rulează pe `http://localhost:3001` (din rădăcina repo-ului sau din `frontend/`).
 
-### 3) Variabile de mediu backend (`backend/.env`)
+### Variabile de mediu (`backend/.env`)
 
 - `SUPABASE_URL`
-- `SUPABASE_KEY`
+- `SUPABASE_KEY` (service role)
 - `GEMINI_API_KEY`
 - `SECRET_KEY`
 - `ADMIN_KEY`
 
-## Migrare bibliotecă per utilizator
+Pe **Vercel**, aceleași variabile se setează în *Project → Settings → Environment Variables*.
 
-Rulează migrarea:
+## Supabase (SQL Editor)
 
-- `supabase/migrations/20260413093000_carti_user_scope.sql`
+După ce creezi proiectul Supabase, rulează în **SQL Editor** scripturile de mai jos (în ordine). Activează **RLS** când ți se cere.
 
-Aceasta adaugă:
+### Tabele guest + segmente playlist
 
-- `carti.user_id` (FK spre `utilizatori.id`)
-- indexuri pentru filtrare per utilizator
-- RLS + policy de service role
+```sql
+CREATE TABLE IF NOT EXISTS guest_sessions (
+    id UUID PRIMARY KEY,
+    credits_remaining INT NOT NULL DEFAULT 5000,
+    credits_used INT NOT NULL DEFAULT 0,
+    jobs_count INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '7 days')
+);
 
-Pentru date vechi (legacy), proprietatea poate rămâne și pe `created_by_email` până la migrarea completă.
+CREATE TABLE IF NOT EXISTS carti_segmente (
+    id BIGSERIAL PRIMARY KEY,
+    carte_id BIGINT NOT NULL REFERENCES carti(id) ON DELETE CASCADE,
+    segment_index INT NOT NULL,
+    text_fragment TEXT NOT NULL,
+    audio_link TEXT NOT NULL,
+    char_count INT NOT NULL DEFAULT 0,
+    creat_la TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (carte_id, segment_index)
+);
 
-## Documentație detaliată
+CREATE INDEX IF NOT EXISTS idx_carti_segmente_carte ON carti_segmente (carte_id, segment_index);
 
-Vezi `documentation/README.md` pentru index complet:
+ALTER TABLE carti ADD COLUMN IF NOT EXISTS guest_session_id UUID;
 
-- arhitectură (`documentation/ARCHITECTURE.md`)
-- API (`documentation/API-OVERVIEW.md`)
-- roluri (`documentation/ROLES.md`)
-- pipeline texte lungi (`documentation/PIPELINE-LONG-TEXT.md`)
+CREATE INDEX IF NOT EXISTS idx_carti_guest_session ON carti (guest_session_id) WHERE guest_session_id IS NOT NULL;
 
-## Stadiu proiect (ce este deja funcțional)
+ALTER TABLE guest_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE carti_segmente ENABLE ROW LEVEL SECURITY;
+```
 
-- Autentificare pe roluri (`admin`, `user`, `guest`) cu JWT emis de backend.
-- Generare audiobook din URL (`/extrage`) și din text introdus (`/genereaza_text`).
-- Extragere text din fișiere (`/extrage_fisier`): PDF, EPUB, DOCX, TXT, imagini.
-- Bibliotecă per utilizator (`/istoric`) cu control de acces pe proprietar.
-- Catalog public (`/carti/publice`) cu publicare/depublicare și moderare admin.
-- Persistență în Supabase: metadate în Postgres + MP3 în Storage.
-- Migrare activă pentru ownership explicit prin `carti.user_id` (`supabase/migrations/20260413093000_carti_user_scope.sql`).
+### Capitole + previzualizare guest
 
-Pentru explicația completă „ce ai implementat, ce ai folosit și cum”, vezi secțiunea
-**„Ce este deja implementat (progres curent)”** din `documentation/README.md`.
+```sql
+ALTER TABLE carti_segmente ADD COLUMN IF NOT EXISTS chapter_index INT;
+ALTER TABLE carti_segmente ADD COLUMN IF NOT EXISTS chapter_title TEXT;
+
+ALTER TABLE carti ADD COLUMN IF NOT EXISTS is_guest_preview BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE carti ADD COLUMN IF NOT EXISTS source_char_total INT;
+ALTER TABLE carti ADD COLUMN IF NOT EXISTS playlist_mode TEXT NOT NULL DEFAULT 'parts';
+```
+
+## Deploy (Vercel + domeniu public)
+
+Repo-ul este legat de **GitHub** (`Andreea2350/AudioScraperAI`). La **push pe `main`**, Vercel construiește automat proiectul; când deployment-ul este *Ready*, domeniul public afișează versiunea nouă.
+
+1. Commit + `git push origin main`
+2. Verifică build-ul în [Vercel Dashboard](https://vercel.com/dashboard) → Deployments
+3. Asigură-te că variabilele de mediu sunt setate pe Vercel
+4. Rulează scripturile SQL în Supabase (dacă nu le-ai rulat deja)
+
+**Notă:** generarea audio poate dura 1–2 minute; pe planuri Vercel cu timeout scurt, textele lungi pot eșua — pentru cărți foarte mari, un server propriu (Docker) este mai potrivit.
+
+## Funcționalități principale
+
+- Roluri: `admin`, `user`, `guest`
+- Generare din URL (`/extrage/stream`), text (`/genereaza_text/stream`), fișier (`/genereaza_fisier/stream`)
+- Playlist live la generare + același playlist la deschiderea cărții din bibliotecă
+- Descărcare / partajare: MP3 final lipit; ascultare în app: segmente pentru încărcare rapidă
+- Catalog public pe pagina de start

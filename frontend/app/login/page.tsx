@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, getStoredGuestSessionId, isGuestSession, setStoredGuestSessionId } from "@/lib/api";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useI18n } from "@/lib/i18n";
@@ -78,8 +78,6 @@ function LoginPageContent() {
     const [modInregistrare, setModInregistrare] = useState(false);
     const [regEmail, setRegEmail] = useState("");
     const [regPassword, setRegPassword] = useState("");
-    const [regRol, setRegRol] = useState<"user" | "guest">("user");
-    const [regCheie, setRegCheie] = useState("");
     const [regMsg, setRegMsg] = useState<string | null>(null);
     const router = useRouter();
 
@@ -120,20 +118,23 @@ function LoginPageContent() {
     }, [searchParams]);
 
     /**
-     * Daca utilizatorul are deja token salvat, nu il lasam pe /login: redirect la app ca sa nu refaca autentificarea.
-     * Nu punem router in dependinte ca sa nu redeclansam efectul la fiecare rerandare.
+     * Daca utilizatorul e deja autentificat (admin/user), redirect la app.
+     * Sesiunea guest are token dar trebuie sa poata accesa login/inregistrare.
      */
     useEffect(() => {
-        if (typeof window !== "undefined" && localStorage.getItem("token")) {
-            router.replace("/");
+        if (typeof window !== "undefined") {
+            const token = localStorage.getItem("token");
+            if (token && !isGuestSession()) {
+                router.replace("/");
+            }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionat doar la mount; router.replace e stabil
     }, []);
 
-    /** POST /register: creeaza cont doar daca cheia admin din body se potriveste cu ce e pe server. */
+    /** POST /register: creeaza cont user cu email si parola. */
     const handleInregistrare = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!regEmail.trim() || !regPassword || !regCheie.trim()) return;
+        if (!regEmail.trim() || !regPassword) return;
         setIsLoading(true);
         setRegMsg(null);
         setError(null);
@@ -144,8 +145,6 @@ function LoginPageContent() {
                 body: JSON.stringify({
                     email: regEmail.trim(),
                     parola: regPassword,
-                    rol: regRol,
-                    cheie_admin: regCheie.trim(),
                 }),
             });
             const data = await response.json();
@@ -167,10 +166,16 @@ function LoginPageContent() {
         setIsLoading(true);
         setError(null);
         try {
+            const existingGuestId = getStoredGuestSessionId();
             const response = await fetch(`${API_BASE}/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email: "", parola: "", rol: "guest" }),
+                body: JSON.stringify({
+                    email: "",
+                    parola: "",
+                    rol: "guest",
+                    guest_session_id: existingGuestId,
+                }),
             });
             const data = await response.json();
             if (!response.ok) {
@@ -180,6 +185,9 @@ function LoginPageContent() {
             localStorage.setItem("token", data.token);
             localStorage.setItem("rol", data.rol);
             localStorage.setItem("email", data.email ?? "");
+            if (typeof data.guest_session_id === "string") {
+                setStoredGuestSessionId(data.guest_session_id);
+            }
             router.push("/");
         } catch {
             setError(t("login.serverError"));
@@ -313,9 +321,11 @@ function LoginPageContent() {
                             <h1 className="text-2xl font-extrabold mb-1" style={{ color: "var(--text-primary)" }}>
                                 {modInregistrare ? t("login.registerTitle") : t("login.welcomeBack")}
                             </h1>
-                            <p className="text-sm font-medium" style={{ color: "var(--text-muted)" }}>
-                                {modInregistrare ? t("login.registerSubtitle") : t("login.chooseRole")}
-                            </p>
+                            {!modInregistrare ? (
+                                <p className="text-sm font-medium" style={{ color: "var(--text-muted)" }}>
+                                    {t("login.chooseRole")}
+                                </p>
+                            ) : null}
                         </div>
 
                         {modInregistrare ? (
@@ -352,47 +362,6 @@ function LoginPageContent() {
                                         required
                                         value={regPassword}
                                         onChange={(e) => setRegPassword(e.target.value)}
-                                        className="w-full rounded-xl px-4 py-3 text-sm border-2"
-                                        style={{
-                                            borderColor: "var(--input-border)",
-                                            background: "var(--input-bg)",
-                                            color: "var(--text-primary)",
-                                        }}
-                                    />
-                                </div>
-                                <div>
-                                    <label
-                                        className="block text-[11px] font-extrabold uppercase tracking-widest mb-2"
-                                        style={{ color: "var(--text-muted)" }}
-                                    >
-                                        {t("login.roleAccount")}
-                                    </label>
-                                    <select
-                                        value={regRol}
-                                        onChange={(e) => setRegRol(e.target.value as "user" | "guest")}
-                                        className="w-full rounded-xl px-4 py-3 text-sm border-2"
-                                        style={{
-                                            borderColor: "var(--input-border)",
-                                            background: "var(--input-bg)",
-                                            color: "var(--text-primary)",
-                                        }}
-                                    >
-                                        <option value="user">{t("login.regOptionUser")}</option>
-                                        <option value="guest">{t("login.regOptionGuest")}</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label
-                                        className="block text-[11px] font-extrabold uppercase tracking-widest mb-2"
-                                        style={{ color: "var(--text-muted)" }}
-                                    >
-                                        {t("login.adminKey")}
-                                    </label>
-                                    <input
-                                        type="password"
-                                        required
-                                        value={regCheie}
-                                        onChange={(e) => setRegCheie(e.target.value)}
                                         className="w-full rounded-xl px-4 py-3 text-sm border-2"
                                         style={{
                                             borderColor: "var(--input-border)",

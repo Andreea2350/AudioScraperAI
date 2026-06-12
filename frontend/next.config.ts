@@ -1,8 +1,10 @@
 import type { NextConfig } from "next";
 import path from "path";
+import fs from "fs";
 
 /** Radacina aplicatiei Next (folderul `frontend/`); la `npm run build` cwd trebuie sa fie aici. */
-const appRoot = path.resolve(process.cwd());
+const cwd = process.cwd();
+const appRoot = fs.existsSync(path.join(cwd, "frontend")) ? path.join(cwd, "frontend") : cwd;
 
 /**
  * In Docker, seteaza BACKEND_INTERNAL_URL (ex. http://backend:8765) la build pentru proxy /api.

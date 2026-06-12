@@ -30,7 +30,9 @@ import tempfile
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 GEMINI_CHUNK_CHARS = max(1000, int(os.getenv("GEMINI_CHUNK_CHARS", "4500")))
 GEMINI_WORKERS = max(1, int(os.getenv("GEMINI_WORKERS", "4")))
@@ -62,6 +64,27 @@ TTS_FALLBACK_GTTS = os.getenv("TTS_FALLBACK_GTTS", "true").strip().lower() in (
 )
 
 
+def _find_best_cut(text: str, start: int, end: int) -> int:
+    """
+    Alege punctul de taiere din (start, end]: prefera sfarsit de propozitie, apoi spatiu.
+    """
+    end = min(end, len(text))
+    if end <= start:
+        return end
+    window_start = start + max((end - start) // 2, 1)
+    best = start
+    for sep in (". ", "! ", "? ", "… "):
+        pos = text.rfind(sep, window_start, end)
+        if pos > start:
+            best = max(best, pos + len(sep))
+    if best > start:
+        return best
+    cut = text.rfind(" ", window_start, end)
+    if cut <= start:
+        cut = end
+    return cut
+
+
 def chunk_text(text: str, max_size: int) -> list[str]:
     """
     Taie dupa paragrafe duble cand se poate; daca un paragraf intrece max_size, il fragmentam fix.
@@ -87,8 +110,15 @@ def chunk_text(text: str, max_size: int) -> list[str]:
                 chunks.append("".join(buf))
                 buf = []
                 buf_len = 0
-            for j in range(0, len(piece), max_size):
-                chunks.append(piece[j : j + max_size])
+            pos = 0
+            while pos < len(piece):
+                chunk_end = min(pos + max_size, len(piece))
+                if chunk_end < len(piece):
+                    chunk_end = _find_best_cut(piece, pos, chunk_end)
+                    if chunk_end <= pos:
+                        chunk_end = min(pos + max_size, len(piece))
+                chunks.append(piece[pos:chunk_end])
+                pos = chunk_end
             continue
 
         if buf_len + len(piece) <= max_size:
@@ -103,6 +133,32 @@ def chunk_text(text: str, max_size: int) -> list[str]:
     if buf:
         chunks.append("".join(buf))
     return [c for c in chunks if c.strip()]
+
+
+def count_chars_for_generation(text: str) -> int:
+    """Numar de caractere dupa sanitize — folosit la credite si limite."""
+    return len(sanitize_text_pentru_tts((text or "").strip()))
+
+
+def estimate_tts_segment_count(text: str) -> int:
+    t = sanitize_text_pentru_tts((text or "").strip())
+    if not t:
+        return 0
+    return len(chunk_text_for_tts(t, TTS_MAX_CHARS))
+
+
+def prepare_text_for_audio(text: str, gemini_model=None, *, use_gemini: bool = True) -> str:
+    """
+    Sanitize + optional curatare Gemini (aceeasi logica ca la extragere URL).
+    Daca nu exista model Gemini, returneaza doar textul sanitizat.
+    """
+    text = sanitize_text_pentru_tts((text or "").strip())
+    if not text:
+        return ""
+    if use_gemini and gemini_model is not None:
+        cleaned = curata_text_cu_gemini(gemini_model, text)
+        return cleaned if cleaned else text
+    return text
 
 
 def _prompt_curata_fragment(index: int, total: int, fragment: str) -> str:
@@ -191,10 +247,9 @@ def chunk_text_for_tts(text: str, max_size: int) -> list[str]:
     while start < n:
         end = min(start + max_size, n)
         if end < n:
-            cut = text.rfind(" ", start + max_size // 2, end)
-            if cut <= start:
-                cut = end
-            end = cut
+            end = _find_best_cut(text, start, end)
+            if end <= start:
+                end = min(start + max_size, n)
         piece = text[start:end].strip()
         if piece:
             out.append(piece)
@@ -230,10 +285,26 @@ def _este_fisier_mp3_valid(path: str) -> bool:
 
 
 def _durata_mp3_ms(path: str) -> int:
-    from pydub import AudioSegment
+    """Durata in ms: ffprobe daca exista, altfel pydub, altfel estimare din marimea fisierului."""
+    dur_sec = _ffprobe_duration_sec(path)
+    if dur_sec is not None and dur_sec > 0:
+        return int(dur_sec * 1000)
+    try:
+        from pydub import AudioSegment
 
-    seg = AudioSegment.from_mp3(path)
-    return int(len(seg))
+        ms = int(len(AudioSegment.from_mp3(path)))
+        if ms > 0:
+            return ms
+    except Exception:
+        pass
+    if _este_fisier_mp3_valid(path):
+        sz = os.path.getsize(path)
+        if sz >= MIN_MP3_PART_BYTES:
+            # Estimare conservatoare (~64 kbps) ca sa trecem validarea fara ffmpeg instalat.
+            return max(500, sz // 8)
+    raise RuntimeError(
+        "Nu pot citi durata MP3 (instalează ffmpeg în PATH sau verifică fișierul generat)."
+    )
 
 
 def _gtts_e_rate_limit(err: BaseException) -> bool:
@@ -436,10 +507,21 @@ def _salveaza_fragment(chunk: str, path: str) -> None:
         _salveaza_fragment_gtts(chunk, path)
 
 
-def synthesize_ro_to_mp3_path(text: str) -> str:
+@dataclass
+class TtsSegmentResult:
+    index: int
+    total: int
+    text: str
+    mp3_path: str
+
+
+def synthesize_ro_with_segments(
+    text: str,
+    on_segment_complete: Callable[[TtsSegmentResult], None] | None = None,
+) -> tuple[str, list[TtsSegmentResult]]:
     """
-    Intoarce calea catre un fisier temporar .mp3. Intern: sanitize, taiere la TTS_MAX_CHARS,
-    sintetizare per fragment (cu pauza TTS_DELAY_SEC), lipire cu ffmpeg sau pydub.
+    Genereaza MP3 final + lista de segmente (text + fisier temporar per bucata).
+    on_segment_complete e apelat dupa fiecare segment TTS, inainte de concatenare.
     """
     text = sanitize_text_pentru_tts((text or "").strip())
     if not text:
@@ -451,18 +533,22 @@ def synthesize_ro_to_mp3_path(text: str) -> str:
 
     tmpdir = tempfile.mkdtemp(prefix="tts_parts_")
     part_paths: list[str] = []
+    segments: list[TtsSegmentResult] = []
+    total = len(parts)
 
     def genereaza_toate_secvential() -> None:
         for i, chunk in enumerate(parts):
             p = os.path.join(tmpdir, f"p{i}.mp3")
             _salveaza_fragment(chunk, p)
             part_paths.append(p)
+            seg = TtsSegmentResult(index=i, total=total, text=chunk, mp3_path=p)
+            segments.append(seg)
+            if on_segment_complete is not None:
+                on_segment_complete(seg)
             if TTS_DELAY_SEC > 0 and i < len(parts) - 1:
                 time.sleep(TTS_DELAY_SEC)
 
     def genereaza_paralel_limitat() -> None:
-        """Folosit doar cand motorul e gTTS si ai marit GTTS_WORKERS in cunostinta de cauza."""
-
         def synth(ic: tuple[int, str]) -> tuple[int, str]:
             i, chunk = ic
             p = os.path.join(tmpdir, f"p{i}.mp3")
@@ -472,13 +558,18 @@ def synthesize_ro_to_mp3_path(text: str) -> str:
         with ThreadPoolExecutor(max_workers=min(GTTS_WORKERS, len(parts))) as ex:
             ordered = list(ex.map(synth, enumerate(parts)))
         ordered.sort(key=lambda x: x[0])
-        part_paths.extend(p for _, p in ordered)
+        for i, chunk in enumerate(parts):
+            p = next(pth for idx, pth in ordered if idx == i)
+            part_paths.append(p)
+            seg = TtsSegmentResult(index=i, total=total, text=chunk, mp3_path=p)
+            segments.append(seg)
+            if on_segment_complete is not None:
+                on_segment_complete(seg)
 
     try:
         if TTS_ENGINE == "gtts" and GTTS_WORKERS > 1:
             genereaza_paralel_limitat()
         else:
-            # Cazul fericit: un fragment dupa altul, cel mai predictibil pentru Edge si pentru gTTS default.
             genereaza_toate_secvential()
 
         if len(parts) == 1:
@@ -493,7 +584,7 @@ def synthesize_ro_to_mp3_path(text: str) -> str:
             _concat_mp3_files(part_paths, out_path)
 
         _assert_mp3_final_valid(out_path, len(text))
-        return out_path
+        return out_path, segments
     finally:
         for p in part_paths:
             try:
@@ -505,6 +596,15 @@ def synthesize_ro_to_mp3_path(text: str) -> str:
             os.rmdir(tmpdir)
         except OSError:
             pass
+
+
+def synthesize_ro_to_mp3_path(text: str) -> str:
+    """
+    Intoarce calea catre un fisier temporar .mp3. Intern: sanitize, taiere la TTS_MAX_CHARS,
+    sintetizare per fragment (cu pauza TTS_DELAY_SEC), lipire cu ffmpeg sau pydub.
+    """
+    out_path, _segments = synthesize_ro_with_segments(text)
+    return out_path
 
 
 def _ffprobe_duration_sec(path: str) -> float | None:

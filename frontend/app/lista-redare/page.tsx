@@ -4,9 +4,10 @@
  * Lista de redare: adaugi URL-uri sau fisiere, extragi text (POST /extrage_fisier), apoi generezi audio
  * in ordinea randurilor. Drag-and-drop reordoneaza; fiecare rand are propriul status in UI.
  */
-import { useCallback, useRef, useState } from "react";
-import { API_BASE, authHeadersJson, authHeadersMultipart } from "@/lib/api";
-import { DOCUMENT_FILE_ACCEPT, IMAGE_FILE_ACCEPT } from "@/lib/fileUploadAccept";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { API_BASE, authHeadersJson, authHeadersMultipart, isGuestSession } from "@/lib/api";
+import { DOCUMENT_FILE_ACCEPT, IMAGE_FILE_ACCEPT, isImageUploadFile } from "@/lib/fileUploadAccept";
+import { useI18n } from "@/lib/i18n";
 
 export type PlaylistItemStatus =
     | "pregatit"
@@ -35,21 +36,27 @@ function newId() {
         : `pl-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-const statusLabel: Record<PlaylistItemStatus, string> = {
-    pregatit: "Pregătit",
-    asteptare: "În așteptare",
-    extragere: "Extrage text…",
-    generare: "Generează audio…",
-    gata: "Finalizat",
-    eroare: "Eroare",
-};
 
 export default function ListaRedarePage() {
+    const { t } = useI18n();
+    const statusLabels = useMemo(
+        (): Record<PlaylistItemStatus, string> => ({
+            pregatit: t("playlist.statusReady"),
+            asteptare: t("playlist.statusWaiting"),
+            extragere: t("playlist.statusExtracting"),
+            generare: t("playlist.statusGenerating"),
+            gata: t("playlist.statusDone"),
+            eroare: t("playlist.statusError"),
+        }),
+        [t],
+    );
     const [items, setItems] = useState<PlaylistItem[]>([]);
     const [urlInput, setUrlInput] = useState("");
     const [urlModalOpen, setUrlModalOpen] = useState(false);
     const [batchRunning, setBatchRunning] = useState(false);
     const [dragId, setDragId] = useState<string | null>(null);
+    const [imageLockedMsg, setImageLockedMsg] = useState<string | null>(null);
+    const isGuest = isGuestSession();
     const docRef = useRef<HTMLInputElement>(null);
     const imgRef = useRef<HTMLInputElement>(null);
 
@@ -61,7 +68,7 @@ export default function ListaRedarePage() {
             // eslint-disable-next-line no-new
             new URL(u);
         } catch {
-            alert("Introduceți un URL valid (https://…)");
+            alert(t("playlist.invalidUrl"));
             return;
         }
         setItems((prev) => [
@@ -88,19 +95,24 @@ export default function ListaRedarePage() {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-            throw new Error(typeof data.detail === "string" ? data.detail : "Nu s-a putut citi fișierul.");
+            throw new Error(typeof data.detail === "string" ? data.detail : t("playlist.fileReadError"));
         }
         if (data.status !== "success" || !data.text) {
-            throw new Error("Răspuns invalid de la server.");
+            throw new Error(t("playlist.invalidResponse"));
         }
         return {
             titlu: (data.titlu_sugerat as string) || file.name.replace(/\.[^/.]+$/, ""),
             text: data.text as string,
         };
-    }, []);
+    }, [t]);
 
     const onPickFile = async (file: File | undefined) => {
         if (!file) return;
+        if (isGuest && isImageUploadFile(file)) {
+            setImageLockedMsg(t("shell.imageLocked"));
+            return;
+        }
+        setImageLockedMsg(null);
         const id = newId();
         setItems((prev) => [
             ...prev,
@@ -179,7 +191,7 @@ export default function ListaRedarePage() {
                 it.status === "eroare",
         );
         if (queue.length === 0) {
-            alert("Nu există elemente de generat. Adaugă surse sau corectează erorile.");
+            alert(t("playlist.nothingToGenerate"));
             return;
         }
         setBatchRunning(true);
@@ -221,13 +233,13 @@ export default function ListaRedarePage() {
                         throw new Error(data.message || "Eroare");
                     }
                 } else {
-                    throw new Error("Element incomplet (lipsește textul sau URL-ul).");
+                    throw new Error(t("playlist.incompleteItem"));
                 }
                 setItems((prev) =>
                     prev.map((it) => (it.id === q.id ? { ...it, status: "gata" } : it)),
                 );
             } catch (e) {
-                const msg = e instanceof Error ? e.message : "Eroare necunoscută";
+                const msg = e instanceof Error ? e.message : t("playlist.unknownError");
                 setItems((prev) =>
                     prev.map((it) =>
                         it.id === q.id ? { ...it, status: "eroare", errorMessage: msg } : it,
@@ -245,11 +257,10 @@ export default function ListaRedarePage() {
         <div className="p-4 lg:p-8 max-w-4xl mx-auto pb-24">
             <div className="mb-8">
                 <h1 className="text-3xl font-extrabold tracking-tight mb-2" style={{ color: "var(--heading-on-surface)" }}>
-                    Lista de redare
+                    {t("playlist.title")}
                 </h1>
                 <p className="text-sm font-medium leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                    Adaugă linkuri, documente (PDF, DOCX, TXT) sau imagini. Ordinea din listă este ordinea în care se
-                    generează audio-ul — trage rândurile sau folosește săgețile.
+                    {t("playlist.subtitle")}
                 </p>
             </div>
 
@@ -264,7 +275,7 @@ export default function ListaRedarePage() {
                         boxShadow: "var(--shadow-btn-sm)",
                     }}
                 >
-                    + Link web
+                    {t("playlist.addWebLink")}
                 </button>
                 <button
                     type="button"
@@ -273,17 +284,49 @@ export default function ListaRedarePage() {
                     className="px-4 py-2.5 rounded-xl text-sm font-bold border-2 border-mid-green text-mid-green hover:bg-surface-green/50 disabled:opacity-50"
                     style={{ background: "var(--card-bg)" }}
                 >
-                    + Document
+                    {t("playlist.addDocument")}
                 </button>
                 <button
                     type="button"
-                    onClick={() => imgRef.current?.click()}
+                    onClick={() => {
+                        if (isGuest) {
+                            setImageLockedMsg(t("shell.imageLocked"));
+                            return;
+                        }
+                        setImageLockedMsg(null);
+                        imgRef.current?.click();
+                    }}
                     disabled={batchRunning}
-                    className="px-4 py-2.5 rounded-xl text-sm font-bold border-2 border-ocean text-ocean hover:bg-ocean-light/30 disabled:opacity-50"
-                    style={{ background: "var(--card-bg)" }}
+                    title={isGuest ? t("shell.imageLockedTitle") : undefined}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-bold border-2 disabled:opacity-50 flex items-center gap-2 ${
+                        isGuest
+                            ? "border-[var(--border-card)] cursor-not-allowed opacity-70 pr-3"
+                            : "border-ocean text-ocean hover:bg-ocean-light/30"
+                    }`}
+                    style={{ background: "var(--card-bg)", color: isGuest ? "var(--text-muted)" : undefined }}
                 >
-                    + Imagine
+                    <span className="flex items-center gap-1.5">
+                        {t("playlist.addImage")}
+                        {isGuest ? (
+                            <span
+                                className="text-[9px] font-extrabold uppercase tracking-wide rounded-full px-1.5 py-0.5"
+                                style={{ background: "rgba(196,147,63,0.12)", color: "#C4933F" }}
+                            >
+                                {t("shell.imageBadgeAccount")}
+                            </span>
+                        ) : null}
+                    </span>
+                    {isGuest ? (
+                        <span className="ml-1 text-sm leading-none opacity-60" aria-hidden>
+                            🔒
+                        </span>
+                    ) : null}
                 </button>
+                {imageLockedMsg ? (
+                    <p className="w-full text-xs font-medium px-1" style={{ color: "#C4933F" }}>
+                        {imageLockedMsg}
+                    </p>
+                ) : null}
                 <input
                     ref={docRef}
                     type="file"
@@ -316,8 +359,8 @@ export default function ListaRedarePage() {
                     style={{ borderColor: "var(--border-card)", background: "var(--card-bg-muted)" }}
                 >
                     <div className="text-4xl mb-4 opacity-40">📋</div>
-                    <p className="font-bold" style={{ color: "var(--text-body)" }}>Lista este goală</p>
-                    <p className="text-sm mt-2" style={{ color: "var(--text-muted)" }}>Adaugă surse cu butoanele de mai sus.</p>
+                    <p className="font-bold" style={{ color: "var(--text-body)" }}>{t("playlist.emptyTitle")}</p>
+                    <p className="text-sm mt-2" style={{ color: "var(--text-muted)" }}>{t("playlist.emptyHint")}</p>
                 </div>
             ) : (
                 <ul className="space-y-2">
@@ -339,7 +382,7 @@ export default function ListaRedarePage() {
                             <div
                                 className="flex items-center px-2 cursor-grab active:cursor-grabbing hover:text-mid-green shrink-0"
                                 style={{ color: "var(--text-faint)" }}
-                                title="Trage pentru a reordona"
+                                title={t("playlist.dragHint")}
                             >
                                 ⋮⋮
                             </div>
@@ -347,7 +390,7 @@ export default function ListaRedarePage() {
                                 <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0">
                                         <span className="text-[10px] font-extrabold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-                                            {it.sourceKind === "url" ? "Link" : "Document"}
+                                            {it.sourceKind === "url" ? t("playlist.rowLink") : t("playlist.rowDocument")}
                                         </span>
                                         <p className="font-bold text-sm truncate" style={{ color: "var(--text-primary)" }}>{it.label}</p>
                                         {it.errorMessage && (
@@ -375,7 +418,7 @@ export default function ListaRedarePage() {
                                                       : "#3A8FB5",
                                         }}
                                     >
-                                        {statusLabel[it.status]}
+                                        {statusLabels[it.status]}
                                     </span>
                                 </div>
                             </div>
@@ -443,7 +486,7 @@ export default function ListaRedarePage() {
                             boxShadow: "var(--shadow-btn-primary)",
                         }}
                     >
-                        {batchRunning ? "Se procesează…" : `▶ Generează audio (${readyCount})`}
+                        {batchRunning ? t("playlist.processing") : `${t("playlist.generate")} (${readyCount})`}
                     </button>
                 </div>
             )}

@@ -1,9 +1,22 @@
 /**
  * URL de baza pentru FastAPI.
- * Implicit `/api`: Next.js face proxy catre backend (acelasi domeniu/port la deploy).
- * Seteaza NEXT_PUBLIC_API_URL daca vrei sa apelezi direct backend-ul (ex. alt host).
+ * In dev local folosim direct backend-ul (8765) ca SSE-ul sa nu fie buffer-uit de proxy-ul Next.
+ * In productie ramane `/api` (rewrite catre backend).
  */
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "/api";
+function resolveApiBase(): string {
+    if (process.env.NEXT_PUBLIC_API_URL) {
+        return process.env.NEXT_PUBLIC_API_URL;
+    }
+    if (typeof window !== "undefined") {
+        const host = window.location.hostname;
+        if (host === "localhost" || host === "127.0.0.1") {
+            return "http://127.0.0.1:8765";
+        }
+    }
+    return "/api";
+}
+
+export const API_BASE = resolveApiBase();
 
 function getActiveSessionToken(): string | null {
     if (typeof window === "undefined") return null;
@@ -64,6 +77,163 @@ export function mesajEroareFastAPI(data: unknown, fallback: string): string {
     return fallback;
 }
 
+export const GUEST_SESSION_STORAGE_KEY = "guest_session_id";
+
+export type GuestCreditsInfo = {
+    guest_session_id?: string;
+    credits_remaining: number | null;
+    credits_total: number | null;
+    credits_per_job_max: number | null;
+    migration_required?: boolean;
+};
+
+export type PlaylistMode = "parts" | "chapters";
+
+export type GenerationSegment = {
+    index: number;
+    total: number;
+    text_preview: string;
+    char_count: number;
+    audio_link: string | null;
+    chapter_index?: number | null;
+    chapter_title?: string | null;
+};
+
+export type GenerationStreamEvent =
+    | { type: "phase"; phase: string; segments_total?: number; char_count?: number }
+    | { type: "playlist_mode"; mode: PlaylistMode; book_threshold?: number }
+    | { type: "preview"; source_char_total: number; processed_char_count: number }
+    | { type: "chapter_start"; chapter_index: number; chapter_title: string }
+    | ({ type: "segment" } & GenerationSegment)
+    | ({ type: "done" } & Record<string, unknown>)
+    | { type: "error"; detail: unknown; status_code?: number };
+
+export const GUEST_PREVIEW_CHARS = 5000;
+export const GUEST_JOB_MAX_CHARS = 5000;
+
+async function consumeGenerationSse(
+    res: Response,
+    onEvent: (evt: GenerationStreamEvent) => void,
+): Promise<void> {
+    if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const detail = mesajEroareFastAPI(data, `HTTP ${res.status}`);
+        onEvent({ type: "error", detail, status_code: res.status });
+        throw new Error(detail);
+    }
+    const reader = res.body?.getReader();
+    if (!reader) {
+        onEvent({ type: "error", detail: "Stream indisponibil." });
+        throw new Error("Stream indisponibil.");
+    }
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let streamError: string | null = null;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const part of parts) {
+            const line = part.trim();
+            if (!line.startsWith("data:")) continue;
+            try {
+                const parsed = JSON.parse(line.slice(5).trim()) as GenerationStreamEvent;
+                if (parsed.type === "error") {
+                    const detail = parsed.detail;
+                    streamError =
+                        typeof detail === "string"
+                            ? detail
+                            : mesajEroareFastAPI({ detail }, "Eroare la generare.");
+                }
+                onEvent(parsed);
+            } catch {
+                // ignoram
+            }
+        }
+    }
+    if (streamError) throw new Error(streamError);
+}
+
+/** Genereaza text cu SSE — segmentele apar pe masura ce sunt gata. */
+export async function streamGenereazaText(
+    body: { titlu: string; text: string; curata_cu_gemini?: boolean },
+    onEvent: (evt: GenerationStreamEvent) => void,
+    signal?: AbortSignal,
+): Promise<void> {
+    const res = await fetch(`${API_BASE}/genereaza_text/stream`, {
+        method: "POST",
+        headers: authHeadersJson(),
+        body: JSON.stringify({ curata_cu_gemini: false, ...body }),
+        signal,
+    });
+    await consumeGenerationSse(res, onEvent);
+}
+
+/** URL → extract + generate cu SSE. */
+export async function streamExtrageUrl(
+    body: { url: string; force_regenerate?: boolean },
+    onEvent: (evt: GenerationStreamEvent) => void,
+    signal?: AbortSignal,
+): Promise<void> {
+    const res = await fetch(`${API_BASE}/extrage/stream`, {
+        method: "POST",
+        headers: authHeadersJson(),
+        body: JSON.stringify(body),
+        signal,
+    });
+    await consumeGenerationSse(res, onEvent);
+}
+
+/** Fisier → extract + generate cu SSE. */
+export async function streamGenereazaFisier(
+    file: File,
+    opts: { titlu?: string; curata_cu_gemini?: boolean },
+    onEvent: (evt: GenerationStreamEvent) => void,
+    signal?: AbortSignal,
+): Promise<void> {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (opts.titlu) fd.append("titlu", opts.titlu);
+    fd.append("curata_cu_gemini", String(Boolean(opts.curata_cu_gemini)));
+    const res = await fetch(`${API_BASE}/genereaza_fisier/stream`, {
+        method: "POST",
+        headers: authHeadersMultipart(),
+        body: fd,
+        signal,
+    });
+    await consumeGenerationSse(res, onEvent);
+}
+
+export type CarteSegment = {
+    segment_index: number;
+    text_fragment: string;
+    audio_link: string;
+    char_count: number;
+    chapter_index?: number | null;
+    chapter_title?: string | null;
+};
+
+export async function fetchCarteSegmente(carteId: number): Promise<CarteSegment[]> {
+    const res = await fetch(`${API_BASE}/carti/${carteId}/segmente`, { headers: authHeadersJson() });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { data?: CarteSegment[] };
+    return data.data ?? [];
+}
+
+export function segmentsFromCarteDb(rows: CarteSegment[], playlistMode: PlaylistMode = "parts"): GenerationSegment[] {
+    return rows.map((r) => ({
+        index: r.segment_index,
+        total: rows.length,
+        text_preview: r.text_fragment.slice(0, 120) + (r.text_fragment.length > 120 ? "…" : ""),
+        char_count: r.char_count,
+        audio_link: r.audio_link,
+        chapter_index: r.chapter_index ?? null,
+        chapter_title: r.chapter_title ?? null,
+    }));
+}
+
 export function authHeadersMultipart(): HeadersInit {
     const headers: Record<string, string> = {};
     const t = getActiveSessionToken();
@@ -77,4 +247,31 @@ export function clearAuthSession(): void {
     localStorage.removeItem("token");
     localStorage.removeItem("rol");
     localStorage.removeItem("email");
+    localStorage.removeItem(GUEST_SESSION_STORAGE_KEY);
+}
+
+export function getStoredGuestSessionId(): string | null {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem(GUEST_SESSION_STORAGE_KEY);
+}
+
+export function setStoredGuestSessionId(id: string): void {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(GUEST_SESSION_STORAGE_KEY, id);
+}
+
+export async function fetchGuestCredits(): Promise<GuestCreditsInfo | null> {
+    if (!isGuestSession()) return null;
+    const res = await fetch(`${API_BASE}/guest/credits`, { headers: authHeadersJson() });
+    if (!res.ok) return null;
+    return (await res.json()) as GuestCreditsInfo;
+}
+
+export function getStoredUserRole(): string | null {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("rol");
+}
+
+export function isGuestSession(): boolean {
+    return getStoredUserRole() === "guest";
 }
