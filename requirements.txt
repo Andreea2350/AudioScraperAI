@@ -5,6 +5,7 @@ beautifulsoup4
 gTTS
 edge-tts
 pydub
+audioop-lts; python_version >= "3.13"
 python-dotenv
 google-generativeai
 supabase

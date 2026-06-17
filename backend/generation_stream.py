@@ -15,19 +15,34 @@ try:
 except ModuleNotFoundError:
     from backend.generation_cancel import GenerationCancelled
 
-from chapter_detection import (
-    BOOK_MODE_CHAR_THRESHOLD,
-    detect_chapters,
-    playlist_mode_for_length,
-)
-from long_text_pipeline import (
-    MIN_FINAL_MP3_BYTES,
-    TtsSegmentResult,
-    _concat_mp3_files,
-    estimate_tts_segment_count,
-    prepare_text_for_audio,
-    synthesize_ro_with_segments,
-)
+try:
+    from chapter_detection import (
+        BOOK_MODE_CHAR_THRESHOLD,
+        detect_chapters,
+        playlist_mode_for_length,
+    )
+    from long_text_pipeline import (
+        MIN_FINAL_MP3_BYTES,
+        TtsSegmentResult,
+        _concat_mp3_files,
+        estimate_tts_segment_count,
+        prepare_text_for_audio,
+        synthesize_ro_with_segments,
+    )
+except ModuleNotFoundError:
+    from backend.chapter_detection import (
+        BOOK_MODE_CHAR_THRESHOLD,
+        detect_chapters,
+        playlist_mode_for_length,
+    )
+    from backend.long_text_pipeline import (
+        MIN_FINAL_MP3_BYTES,
+        TtsSegmentResult,
+        _concat_mp3_files,
+        estimate_tts_segment_count,
+        prepare_text_for_audio,
+        synthesize_ro_with_segments,
+    )
 
 # Tip pentru functia care emite evenimente SSE catre frontend
 EmitFn = Callable[[dict], None]
