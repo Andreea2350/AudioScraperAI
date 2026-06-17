@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Migrare usoara: pune created_by_email pe randuri vechi din tabelul carti, ca sa apara in biblioteca userului.
+Script utilitar: atribui carti vechi unui utilizator (created_by_email).
+Rulez manual dupa migrari, din folderul backend cu .env configurat.
 
-Exemple (din backend, cu .env):
+Exemple:
   python assign_books_to_user.py
   python assign_books_to_user.py --email alt@exemplu.ro
   python assign_books_to_user.py --all
-
-Fara --all: doar cartile fara proprietar (NULL). Cu --all: suprascrie orice proprietar existent.
 """
 
 from __future__ import annotations
@@ -27,16 +26,16 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Seteaza created_by_email pe carti existente.")
+    parser = argparse.ArgumentParser(description="Setez created_by_email pe carti existente.")
     parser.add_argument(
         "--email",
         default="user@audioscraper.ro",
-        help="Email utilizator (trebuie sa existe in tabelul utilizatori pentru login ca user).",
+        help="Email utilizator (trebuie sa existe in tabelul utilizatori).",
     )
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Actualizeaza TOATE cartile, nu doar cele cu proprietar NULL.",
+        help="Actualizez TOATE cartile, nu doar cele cu proprietar NULL.",
     )
     args = parser.parse_args()
 
@@ -47,6 +46,7 @@ def main() -> None:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     target = args.email.strip().lower()
 
+    # Verific conexiunea la tabelul carti
     try:
         supabase.table("carti").select("id").limit(1).execute()
     except APIError as e:
@@ -54,7 +54,7 @@ def main() -> None:
         sys.exit(1)
 
     if args.all:
-        # Lista completa de id-uri; urmeaza update in masa pentru fiecare rand.
+        # Mod agresiv: suprascriu proprietarul pentru fiecare carte
         res = supabase.table("carti").select("id").execute()
         rows = res.data or []
         n = 0
@@ -79,14 +79,13 @@ def main() -> None:
         if "created_by_email" in err or "42703" in err:
             print(
                 "Coloana created_by_email nu exista inca in tabelul carti.\n"
-                "Ruleaza mai intai in Supabase (SQL Editor) scriptul:\n"
-                "  documentation/SUPABASE-MIGRATION-CARTI.sql\n"
+                "Ruleaza mai intai in Supabase (SQL Editor) scriptul de migrare carti.\n"
                 "Apoi ruleaza din nou: python assign_books_to_user.py"
             )
             sys.exit(1)
         raise
 
-    # Actualizeaza toate randurile fara proprietar
+    # Actualizez doar randurile fara proprietar
     supabase.table("carti").update({"created_by_email": target}).is_("created_by_email", "null").execute()
     n_null_dupa = count_where_null()
     n_user = count_where_user()

@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * Sistem i18n: dictionare RO/EN, localStorage, hook useI18n pentru toata aplicatia.
+ * Textele UI (messagesRo/messagesEn) pastreaza diacriticele — sunt pentru utilizator.
+ */
 import { useCallback, useSyncExternalStore } from "react";
 import { LANG_STORAGE_KEY } from "@/lib/localeConstants";
 
@@ -9,7 +13,7 @@ export { LANG_STORAGE_KEY };
 
 const LOCALE_EVENT = "audiobooks-locale-change";
 
-/** Dictionar romanesc: fiecare cheie exista si in messagesEn (TypeScript forteaza perechile). */
+/** Dictionar romanesc: fiecare cheie exista si in messagesEn. */
 export const messagesRo = {
     "login.back": "← Înapoi la început",
     "login.loading": "Se încarcă…",
@@ -62,30 +66,13 @@ export const messagesRo = {
     "intro.register": "Înregistrare",
     "intro.heroTitle": "Creează și ascultă cărți audio",
     "intro.heroBody":
-        "Extrage text din web sau documente, generează audio și alege ce publici în biblioteca deschisă mai jos — ca un mic magazin pentru ascultători.",
+        "Extrage text din web sau documente, generează audio cu voci TTS și păstrează totul în biblioteca ta personală.",
     "intro.startNow": "Începe acum",
     "intro.includes": "Include",
     "intro.incUrl": "✦ URL, PDF, DOCX, imagini",
     "intro.incPlaylist": "✦ Listă de redare & ordine",
-    "intro.incPublish": "✦ Publică în Bibliotecă",
-    "intro.listenTitle": "Ascultă din bibliotecă",
-    "intro.listenDesc": "Până la patru cărți audio publice (cele mai recente din catalog).",
-    "intro.loading": "Se încarcă…",
-    "intro.noSamples": "Încă nu există cărți publice. După ce marchezi cărți ca „Public” în aplicație, vor apărea aici.",
-    "intro.publicLibrary": "Bibliotecă publică",
-    "intro.publicLibrarySub": "Cărți audio împărtășite de comunitate",
-    "intro.adminBadge": "Mod admin — poți șterge din catalog",
-    "intro.loadError": "Nu s-a putut încărca catalogul.",
-    "intro.serverDown": "Server indisponibil.",
-    "intro.emptyLibrary": "Încă nu există cărți publice.",
-    "intro.emptyHint": "Utilizatorii pot bifa „Public” pe cărțile lor.",
-    "intro.play": "▶ Ascultă",
-    "intro.delete": "Șterge",
+    "intro.incVoices": "✦ Voci TTS (română, engleză)",
     "intro.footer": "AudioScraperAI — platformă audio inteligentă",
-    "intro.audioUnsupported": "Browser-ul nu suportă audio HTML5.",
-    "intro.confirmDelete": "Ștergi această carte din catalog și din bibliotecă?",
-    "intro.deleteFail": "Eroare la ștergere.",
-    "intro.networkError": "Eroare de rețea.",
 
     "settings.back": "← Înapoi la aplicație",
     "settings.title": "Setări și opțiuni",
@@ -107,17 +94,13 @@ export const messagesRo = {
     "settings.langRo": "Română",
     "settings.langEn": "English",
     "settings.cardAdmin": "Panou administrator",
-    "settings.publicCatalog": "Catalog public",
-    "settings.publicCatalogBody":
-        "Moderarea cărților vizibile pe pagina de start se face acolo. Poți șterge din catalog cărțile marcate public.",
-    "settings.openCatalog": "Deschide catalogul public →",
     "settings.adminRegNote":
         "Înregistrarea utilizatorilor noi din aplicație folosește cheia de administrare setată în configurarea serverului (variabilă de mediu).",
     "settings.cardYourRights": "Drepturile contului tău",
     "settings.cardRights": "Drepturi",
     "settings.roleReadError": "Nu s-a putut citi rolul. Reîncarcă pagina sau autentifică-te din nou.",
-    "settings.cardPublicPage": "Pagină publică",
-    "settings.publicPageBody": "Catalogul deschis pentru vizitatori și materiale de prezentare.",
+    "settings.cardPublicPage": "Pagină de start",
+    "settings.publicPageBody": "Prezentare produs și link-uri către autentificare.",
     "settings.openLanding": "Deschide pagina de start →",
 
     "library.filterTooltip": "Filtrează",
@@ -226,7 +209,6 @@ export const messagesRo = {
     "home.emptyShelves": "Rafturile tale sunt goale.",
     "home.emptyShelvesHint": "Folosește meniul din stânga pentru a adăuga prima ta carte.",
     "home.myLibrary": "Biblioteca Mea",
-    "home.public": "Public",
     "home.listen": "Ascultă",
     "home.menuRename": "Redenumește",
     "home.menuDownload": "Descarcă MP3",
@@ -264,8 +246,24 @@ export const messagesRo = {
     "home.guestPerJobMax": "Maxim per generare",
     "home.cleanWithAi": "Curăță textul cu AI (Gemini)",
     "home.cleanWithAiHint": "Elimină formatare inutilă și typo-uri înainte de audio. Debifat = textul tău merge direct la TTS.",
+    "home.ttsVoiceLabel": "Vocea naratorului",
+    "home.ttsVoiceHint": "Alege vocea preferată. Apasă redare pentru o previzualizare scurtă.",
+    "home.ttsVoicePreview": "Ascultă demo",
+    "home.ttsVoicePreviewStop": "Oprește",
+    "home.ttsVoicePreviewError": "Nu s-a putut reda previzualizarea vocii.",
+    "home.ttsVoiceLoading": "Se încarcă vocile…",
     "gen.playlistTitle": "Playlist generare",
     "gen.playlistChapters": "Capitole",
+    "gen.fullAudiobook": "Audiobook complet",
+    "gen.playAll": "Redă tot",
+    "gen.showSections": "Arată secțiunile",
+    "gen.hideSections": "Ascunde secțiunile",
+    "gen.sectionsTitle": "Secțiuni",
+    "gen.extractPreviewTitle": "Text extras din document",
+    "gen.extractStartsWith": "Începe cu",
+    "gen.extractPageStats": "Pagini cu text",
+    "gen.extractEmptyPages": "pagini fără text detectat",
+    "gen.extractOcrPages": "pagini recunoscute cu OCR",
     "gen.phaseStarting": "Se pregătește generarea…",
     "gen.phaseExtracting": "Se extrage textul…",
     "gen.phaseChapters": "Se detectează capitolele…",
@@ -281,7 +279,8 @@ export const messagesRo = {
     "gen.guestPreviewDoneBody": "Ai ascultat previzualizarea gratuită. Creează un cont pentru a genera restul cărții.",
     "gen.guestPreviewSignup": "Creează cont →",
     "gen.charsAbbr": "car.",
-    "home.alertPublicError": "Nu s-a putut actualiza vizibilitatea.",
+    "gen.cancelGeneration": "Anulează generarea",
+    "gen.cancelConfirm": "Anulezi generarea? Progresul curent se pierde și nu se salvează nicio carte.",
     "home.alertNetworkError": "Eroare de rețea.",
     "home.alertRenameError": "Eroare la redenumire.",
     "home.alertDeleteError": "Eroare la ștergere.",
@@ -348,31 +347,13 @@ export const messagesEn: Record<MessageKey, string> = {
     "intro.register": "Register",
     "intro.heroTitle": "Create and listen to audiobooks",
     "intro.heroBody":
-        "Pull text from the web or documents, generate audio, and choose what to publish in the open library below — a small storefront for listeners.",
+        "Extract text from the web or documents, generate audio with TTS voices, and keep everything in your personal library.",
     "intro.startNow": "Get started",
     "intro.includes": "Includes",
     "intro.incUrl": "✦ URL, PDF, DOCX, images",
     "intro.incPlaylist": "✦ Playlists & order",
-    "intro.incPublish": "✦ Publish to the library",
-    "intro.listenTitle": "Listen from the library",
-    "intro.listenDesc": "Up to four public audiobooks (most recent in the catalog).",
-    "intro.loading": "Loading…",
-    "intro.noSamples":
-        "No public books yet. After you mark books as “Public” in the app, they will appear here.",
-    "intro.publicLibrary": "Public library",
-    "intro.publicLibrarySub": "Audiobooks shared by the community",
-    "intro.adminBadge": "Admin mode — you can remove from the catalog",
-    "intro.loadError": "Could not load the catalog.",
-    "intro.serverDown": "Server unavailable.",
-    "intro.emptyLibrary": "No public books yet.",
-    "intro.emptyHint": 'Users can mark their books as “Public”.',
-    "intro.play": "▶ Listen",
-    "intro.delete": "Delete",
+    "intro.incVoices": "✦ TTS voices (Romanian, English)",
     "intro.footer": "AudioScraperAI — smart audio platform",
-    "intro.audioUnsupported": "Your browser does not support HTML5 audio.",
-    "intro.confirmDelete": "Remove this book from the catalog and library?",
-    "intro.deleteFail": "Could not delete.",
-    "intro.networkError": "Network error.",
 
     "settings.back": "← Back to app",
     "settings.title": "Settings & options",
@@ -394,17 +375,13 @@ export const messagesEn: Record<MessageKey, string> = {
     "settings.langRo": "Română",
     "settings.langEn": "English",
     "settings.cardAdmin": "Administrator panel",
-    "settings.publicCatalog": "Public catalog",
-    "settings.publicCatalogBody":
-        "Moderation of books shown on the landing page happens there. You can remove public books from the catalog.",
-    "settings.openCatalog": "Open public catalog →",
     "settings.adminRegNote":
         "New user registration in the app uses the admin key configured on the server (environment variable).",
     "settings.cardYourRights": "Your account permissions",
     "settings.cardRights": "Permissions",
     "settings.roleReadError": "Could not read your role. Reload the page or sign in again.",
-    "settings.cardPublicPage": "Public page",
-    "settings.publicPageBody": "The catalog open to visitors and showcase content.",
+    "settings.cardPublicPage": "Landing page",
+    "settings.publicPageBody": "Product overview and links to sign in.",
     "settings.openLanding": "Open landing page →",
 
     "library.filterTooltip": "Filter",
@@ -513,7 +490,6 @@ export const messagesEn: Record<MessageKey, string> = {
     "home.emptyShelves": "Your shelves are empty.",
     "home.emptyShelvesHint": "Use the menu on the left to add your first book.",
     "home.myLibrary": "My Library",
-    "home.public": "Public",
     "home.listen": "Listen",
     "home.menuRename": "Rename",
     "home.menuDownload": "Download MP3",
@@ -551,8 +527,24 @@ export const messagesEn: Record<MessageKey, string> = {
     "home.guestPerJobMax": "Max per generation",
     "home.cleanWithAi": "Clean text with AI (Gemini)",
     "home.cleanWithAiHint": "Removes junk formatting and typos before audio. Unchecked = your text goes straight to TTS.",
+    "home.ttsVoiceLabel": "Narrator voice",
+    "home.ttsVoiceHint": "Pick your preferred voice. Press play for a short preview.",
+    "home.ttsVoicePreview": "Play demo",
+    "home.ttsVoicePreviewStop": "Stop",
+    "home.ttsVoicePreviewError": "Could not play the voice preview.",
+    "home.ttsVoiceLoading": "Loading voices…",
     "gen.playlistTitle": "Generation playlist",
     "gen.playlistChapters": "Chapters",
+    "gen.fullAudiobook": "Full audiobook",
+    "gen.playAll": "Play all",
+    "gen.showSections": "Show sections",
+    "gen.hideSections": "Hide sections",
+    "gen.sectionsTitle": "Sections",
+    "gen.extractPreviewTitle": "Extracted document text",
+    "gen.extractStartsWith": "Starts with",
+    "gen.extractPageStats": "Pages with text",
+    "gen.extractEmptyPages": "pages with no detected text",
+    "gen.extractOcrPages": "pages recognized with OCR",
     "gen.phaseStarting": "Preparing generation…",
     "gen.phaseExtracting": "Extracting text…",
     "gen.phaseChapters": "Detecting chapters…",
@@ -568,7 +560,8 @@ export const messagesEn: Record<MessageKey, string> = {
     "gen.guestPreviewDoneBody": "You've heard the free preview. Create an account to generate the rest of the book.",
     "gen.guestPreviewSignup": "Sign up →",
     "gen.charsAbbr": "chars",
-    "home.alertPublicError": "Could not update visibility.",
+    "gen.cancelGeneration": "Cancel generation",
+    "gen.cancelConfirm": "Cancel generation? Current progress will be lost and no book will be saved.",
     "home.alertNetworkError": "Network error.",
     "home.alertRenameError": "Rename failed.",
     "home.alertDeleteError": "Delete failed.",
@@ -582,16 +575,19 @@ export const messagesEn: Record<MessageKey, string> = {
     "role.label.unknown": "—",
 };
 
+/** Returnez textul tradus pentru cheia data si limba curenta. */
 export function translate(locale: Locale, key: MessageKey): string {
     const table = locale === "en" ? messagesEn : messagesRo;
     return table[key] ?? messagesRo[key] ?? key;
 }
 
+/** Setez atributul lang pe html pentru accesibilitate si SEO. */
 export function applyLocaleToDocument(locale: Locale): void {
     if (typeof document === "undefined") return;
     document.documentElement.lang = locale === "en" ? "en" : "ro";
 }
 
+/** Citesc limba salvata in localStorage (implicit ro). */
 export function getStoredLocale(): Locale {
     if (typeof window === "undefined") return "ro";
     try {
@@ -602,6 +598,7 @@ export function getStoredLocale(): Locale {
     }
 }
 
+/** Salvez limba si notific componentele abonate la LOCALE_EVENT. */
 export function setStoredLocale(locale: Locale): void {
     try {
         localStorage.setItem(LANG_STORAGE_KEY, locale);
@@ -614,16 +611,19 @@ export function setStoredLocale(locale: Locale): void {
     }
 }
 
+/** Abonare la schimbari de limba (useSyncExternalStore). */
 function subscribeLocale(cb: () => void) {
     if (typeof window === "undefined") return () => {};
     window.addEventListener(LOCALE_EVENT, cb);
     return () => window.removeEventListener(LOCALE_EVENT, cb);
 }
 
+/** Hook React: limba curenta din localStorage. */
 export function useLocale(): Locale {
     return useSyncExternalStore(subscribeLocale, getStoredLocale, () => "ro");
 }
 
+/** Hook principal i18n: locale, setLocale si functia t() pentru traduceri. */
 export function useI18n() {
     const locale = useLocale();
     const setLocale = useCallback((l: Locale) => setStoredLocale(l), []);
@@ -636,14 +636,12 @@ export function rightsUserList(locale: Locale): string[] {
         return [
             "You only see and manage books in your personal library.",
             "You can generate audio from URLs, documents, or text.",
-            'You can mark books as “Public” so they appear in the landing catalog.',
             "You can rename and delete only your own books.",
         ];
     }
     return [
         "Vezi și gestionezi doar cărțile din biblioteca ta personală.",
         "Poți genera audio din URL, documente sau text.",
-        "Poți marca cărți ca „Public” ca să apară în catalogul de pe pagina de start.",
         "Poți redenumi și șterge doar propriile cărți.",
     ];
 }
@@ -653,14 +651,12 @@ export function rightsGuestList(locale: Locale): string[] {
         return [
             "You see books tied to your guest session.",
             "You can generate audio like a signed-in user.",
-            "You cannot mark books as public in the catalog — disabled for guests.",
             "You can rename and delete only your own books.",
         ];
     }
     return [
         "Vezi cărțile asociate sesiunii tale de oaspete.",
         "Poți genera audio la fel ca un utilizator autentificat.",
-        "Nu poți marca cărți ca publice în catalog — această opțiune este dezactivată pentru oaspeți.",
         "Poți redenumi și șterge doar cărțile tale.",
     ];
 }
@@ -669,15 +665,13 @@ export function rightsAdminList(locale: Locale): string[] {
     if (locale === "en") {
         return [
             "You see every book in the system in the library.",
-            "You can rename, delete, and set public visibility for any book.",
-            "On the landing page you can remove books from the public catalog (moderation).",
+            "You can rename and delete any book.",
             "You can create new accounts via registration with the admin key configured on the server.",
         ];
     }
     return [
         "Vezi toate cărțile din sistem în bibliotecă.",
-        "Poți redenumi, șterge și seta vizibilitatea publică pentru orice carte.",
-        "Pe pagina de start poți șterge cărți din catalogul public (moderare).",
+        "Poți redenumi și șterge orice carte.",
         "Poți crea conturi noi prin fluxul de înregistrare, cu cheia de administrare configurată pe server.",
     ];
 }

@@ -172,7 +172,7 @@ export function GenerationPlaylist({
                 </p>
             ) : null}
 
-            <ul className="max-h-56 overflow-y-auto divide-y" style={{ divideColor: "var(--divider)" }}>
+            <ul className="max-h-56 overflow-y-auto divide-y divide-[var(--divider)]">
                 {rows.length === 0 && phase ? (
                     <li className="px-4 py-6 text-center text-sm space-y-2" style={{ color: "var(--text-muted)" }}>
                         <p>

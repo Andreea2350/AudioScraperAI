@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Script de setup: insereaza cativa utilizatori de demo si afiseaza SQL-ul de migrare.
-Ruleaza manual dupa ce ai creat proiectul Supabase si ai pus cheile in .env.
+Script de setup: inserez utilizatori demo si afisez SQL-ul de migrare.
+Rulez manual dupa ce am creat proiectul Supabase si am pus cheile in .env.
 
 Exemplu: python setup_db.py
 """
@@ -24,12 +24,13 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Lista hardcodata doar pentru mediu de test; in productie schimbi parolele sau stergi scriptul.
+# Lista hardcodata doar pentru mediu de test; in productie schimb parolele sau sterg scriptul
 UTILIZATORI = [
     {"email": "admin@audioscraper.ro", "parola": "Admin@1234",  "rol": "admin"},
     {"email": "user@audioscraper.ro",  "parola": "User@1234",   "rol": "user"},
 ]
 
+# SQL de referinta daca tabelul utilizatori nu exista inca
 SQL_MIGRATION = """
 -- Copiaza in Supabase SQL Editor daca vrei sa creezi tabelul din interfata web.
 CREATE TABLE IF NOT EXISTS utilizatori (
@@ -58,7 +59,7 @@ CREATE POLICY "No public access"
 
 
 def verifica_tabel():
-    """Face un select minimal; daca nu crapa, presupunem ca tabelul utilizatori exista."""
+    """Fac un select minimal; daca nu crapa, presupun ca tabelul utilizatori exista."""
     try:
         supabase.table("utilizatori").select("id").limit(1).execute()
         return True
@@ -67,6 +68,7 @@ def verifica_tabel():
 
 
 def creeaza_utilizatori():
+    """Inserez conturile demo daca nu exista deja."""
     creat = 0
     sarit = 0
 

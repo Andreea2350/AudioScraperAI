@@ -5,13 +5,19 @@ import AppShell from "./AppShell";
 import { LANG_STORAGE_KEY } from "@/lib/localeConstants";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
 
+/** Font Inter pentru tot corpul aplicatiei. */
 const inter = Inter({ subsets: ["latin"] });
 
+/** Metadata SEO pentru tab-ul browserului. */
 export const metadata: Metadata = {
     title: "AudioScraperAI",
     description: "Cărți audio din text și web",
 };
 
+/**
+ * Script inline rulat inainte de hidratare: aplica tema dark/light si seteaza
+ * atributul lang pe <html> din localStorage.
+ */
 const themeInit = `
 (function(){
   try {
@@ -27,6 +33,7 @@ const themeInit = `
   } catch (e) {}
 })();`;
 
+/** Layout radacina HTML: font, script tema, wrapper AppShell pentru toate rutele. */
 export default function RootLayout({
     children,
 }: Readonly<{
@@ -35,6 +42,7 @@ export default function RootLayout({
     return (
         <html lang="ro" suppressHydrationWarning>
             <body className={inter.className}>
+                {/* Script initializare tema si limba (anti-flash) */}
                 <script
                     id="theme-init"
                     dangerouslySetInnerHTML={{ __html: themeInit }}

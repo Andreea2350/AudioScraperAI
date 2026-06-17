@@ -1,5 +1,6 @@
 "use client";
 
+/* Comutator tema clara/intunecata, cu stil adaptat pentru header-ul verde al landing-ului. */
 import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { applyTheme, readDomTheme } from "@/lib/theme";
@@ -9,16 +10,18 @@ export function ThemeToggle({
     onBrandBar = false,
 }: {
     className?: string;
-    /** Cand e true, culorile butonului se citesc pe fundalul verde din header-ul paginii intro. */
+    /* Cand e true, culorile butonului se citesc pe fundalul verde din header-ul paginii intro. */
     onBrandBar?: boolean;
 }) {
     const { t } = useI18n();
     const [mode, setMode] = useState<"light" | "dark">("light");
 
+    /* Citeste tema initiala din DOM la montare. */
     useEffect(() => {
         setMode(readDomTheme());
     }, []);
 
+    /* Comuta intre light si dark si persista in DOM. */
     const toggle = useCallback(() => {
         const next = readDomTheme() === "dark" ? "light" : "dark";
         applyTheme(next);
@@ -28,6 +31,7 @@ export function ThemeToggle({
     const isDark = mode === "dark";
     const tooltipLabel = isDark ? t("theme.switchToLight") : t("theme.switchToDark");
 
+    /* Stiluri separate pentru bara de brand vs suprafata standard. */
     const surfaceStyle = {
         borderColor: "var(--theme-toggle-border)",
         background: "var(--theme-toggle-bg)",

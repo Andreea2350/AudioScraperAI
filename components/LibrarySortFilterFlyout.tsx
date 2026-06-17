@@ -1,5 +1,6 @@
 "use client";
 
+/* Panou flyout pentru sortarea bibliotecii dupa nume, dimensiune sau data. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -62,7 +63,7 @@ function ArrowDown({ className }: { className?: string }) {
     );
 }
 
-/** Icon afișat când rândul nu e criteriul activ: sugerează comutare ↑/↓. */
+/* Icon afisat cand randul nu e criteriul activ: sugereaza comutare sus/jos. */
 function SortArrowsNeutral({ className }: { className?: string }) {
     return (
         <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -72,11 +73,13 @@ function SortArrowsNeutral({ className }: { className?: string }) {
     );
 }
 
+/* Directia implicita la prima selectie a unui criteriu de sortare. */
 function defaultDirForKey(key: LibrarySortKey): LibrarySortDir {
     if (key === "data" || key === "dimensiune") return "desc";
     return "asc";
 }
 
+/* Randurile din meniul de sortare: cheie, eticheta i18n si iconita. */
 const SORT_ROWS: {
     sortKey: LibrarySortKey;
     labelKey: "library.sortRowName" | "library.sortRowSize" | "library.sortRowDate";
@@ -87,6 +90,7 @@ const SORT_ROWS: {
     { sortKey: "data", labelKey: "library.sortRowDate", Icon: IconCalendar },
 ];
 
+/* Persista sortarea si emite eveniment pentru restul UI-ului bibliotecii. */
 function applySort(nextKey: LibrarySortKey, nextDir: LibrarySortDir) {
     const s = patchLibraryUi({ sortKey: nextKey, sortDir: nextDir });
     emitLibraryFiltersChange({ nameFilter: s.nameFilter, sortKey: nextKey, sortDir: nextDir });
@@ -109,6 +113,7 @@ export function LibrarySortFilterFlyout({ className = "" }: { className?: string
         syncFromStorage();
     }, [syncFromStorage]);
 
+    /* Asculta schimbari de filtre din alte componente. */
     useEffect(() => {
         const onFilters = (e: Event) => {
             const d = (e as CustomEvent<LibraryFiltersDetail>).detail;
@@ -125,6 +130,7 @@ export function LibrarySortFilterFlyout({ className = "" }: { className?: string
         syncFromStorage();
     }, [open, syncFromStorage]);
 
+    /* Inchide flyout-ul la click in afara sau Escape. */
     useEffect(() => {
         if (!open) return;
         const onDoc = (e: MouseEvent) => {
@@ -223,6 +229,7 @@ export function LibrarySortFilterFlyout({ className = "" }: { className?: string
                             const active = sortKey === row.sortKey;
                             const isAsc = active && sortDir === "asc";
                             const isDesc = active && sortDir === "desc";
+                            /* Prima apasare selecteaza criteriul; a doua inverseaza directia. */
                             const handleToggle = () => {
                                 if (!active) {
                                     const d = defaultDirForKey(row.sortKey);

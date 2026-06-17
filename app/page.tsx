@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { API_BASE, authHeadersJson, clearAuthSession, fetchCarteSegmente, fetchGuestCredits, GUEST_JOB_MAX_CHARS, GUEST_PREVIEW_CHARS, isGuestSession, mesajEroareFastAPI, segmentsFromCarteDb, streamExtrageUrl, streamGenereazaText, type GenerationSegment, type GenerationStreamEvent, type GuestCreditsInfo, type PlaylistMode } from "@/lib/api";
+import { API_BASE, authHeadersJson, clearAuthSession, cancelGenerationJob, fetchCarteSegmente, fetchGuestCredits, GUEST_JOB_MAX_CHARS, GUEST_PREVIEW_CHARS, isAbortError, isGuestSession, mesajEroareFastAPI, segmentsFromCarteDb, streamExtrageUrl, streamGenereazaText, type DocumentExtractMeta, type GenerationSegment, type GenerationStreamEvent, type GuestCreditsInfo, type PlaylistMode } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { GenerationPlaylist } from "@/components/GenerationPlaylist";
+import { TtsVoicePicker } from "@/components/TtsVoicePicker";
 import {
     getBookFolderId,
     LIBRARY_FILTERS_CHANGE_EVENT,
@@ -19,27 +20,32 @@ import {
     type LibrarySortKey,
     type LibraryViewMode,
 } from "@/lib/libraryUiStorage";
+import { getStoredTtsVoice, setStoredTtsVoice } from "@/lib/ttsVoiceStorage";
 
 /**
  * Ecranul principal dupa login: lista de carti (GET /istoric), redare audio, editor pentru text manual,
  * modal pentru URL. AppShell trimite evenimente globale (deschide modal, incarca document) pe care ii ascultam aici.
- * Ce butoane vezi (ex. public in catalog) depinde de rolul din localStorage.
  */
 export default function Home() {
     const { t, locale } = useI18n();
     const router = useRouter();
+
+    /* --- Stare: modal URL si regenerare --- */
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [url, setUrl] = useState("");
     const [forceRegenerate, setForceRegenerate] = useState(false);
 
+    /* --- Stare: editor text manual --- */
     const [showTextEditor, setShowTextEditor] = useState(false);
     const [titluText, setTitluText] = useState("");
     const [textManual, setTextManual] = useState("");
 
+    /* --- Stare: biblioteca, cartea activa, incarcari --- */
     const [isLoading, setIsLoading] = useState(false);
     const [istoricCarti, setIstoricCarti] = useState<any[]>([]);
     const [carteaCurenta, setCarteaCurenta] = useState<any>(null);
 
+    /* --- Stare: meniuri contextuale, redenumire, stergere, toast --- */
     const [meniuDeschisId, setMeniuDeschisId] = useState<number | null>(null);
     const [modalRedenumire, setModalRedenumire] = useState(false);
     const [carteDeRedenumit, setCarteDeRedenumit] = useState<any>(null);
@@ -50,7 +56,7 @@ export default function Home() {
     const [modalStergere, setModalStergere] = useState(false);
     const [carteDeSters, setCarteDeSters] = useState<number | null>(null);
 
-    const [userRol, setUserRol] = useState<string | null>(null);
+    /* --- Stare: credite guest, generare streaming --- */
     const [guestCredits, setGuestCredits] = useState<GuestCreditsInfo | null>(null);
     const [genPhase, setGenPhase] = useState<string | null>(null);
     const [genSegments, setGenSegments] = useState<GenerationSegment[]>([]);
@@ -61,8 +67,48 @@ export default function Home() {
     const [showGuestSignupPrompt, setShowGuestSignupPrompt] = useState(false);
     const [libSegments, setLibSegments] = useState<GenerationSegment[]>([]);
     const [libPlaylistMode, setLibPlaylistMode] = useState<PlaylistMode>("parts");
+    const [documentExtractMeta, setDocumentExtractMeta] = useState<DocumentExtractMeta | null>(null);
     const [curataCuGemini, setCurataCuGemini] = useState(false);
+    const [ttsVoice, setTtsVoice] = useState(() => getStoredTtsVoice());
+    const genAbortRef = useRef<AbortController | null>(null);
+    const genJobIdRef = useRef<string | null>(null);
 
+    /** Goleste playlist-ul live de generare (nu afecteaza libSegments pe cartea deschisa). */
+    const resetGenStreamUi = useCallback(() => {
+        setGenSegments([]);
+        setGenPhase(null);
+        setGenSegmentsTotal(null);
+        setGenActiveSegment(null);
+        setIsGuestPreviewGen(false);
+    }, []);
+
+    /** Opreste generarea pe server dupa confirmare; revine la UI-ul anterior. */
+    const cancelGeneration = useCallback(() => {
+        if (typeof window !== "undefined" && !window.confirm(t("gen.cancelConfirm"))) {
+            return;
+        }
+        const jobId = genJobIdRef.current;
+        genJobIdRef.current = null;
+        if (jobId) {
+            void cancelGenerationJob(jobId).catch(() => {});
+        }
+        genAbortRef.current?.abort();
+        genAbortRef.current = null;
+        resetGenStreamUi();
+        setIsLoading(false);
+        setShowGuestSignupPrompt(false);
+    }, [resetGenStreamUi, t]);
+
+    /** Pregateste AbortController pentru o noua generare. */
+    const beginGenerationRequest = useCallback(() => {
+        genJobIdRef.current = null;
+        genAbortRef.current?.abort();
+        const ac = new AbortController();
+        genAbortRef.current = ac;
+        return ac.signal;
+    }, []);
+
+    /* --- Stare: dosare biblioteca, sortare, filtre, vizualizare --- */
     const [folders, setFolders] = useState<LibraryFolder[]>([]);
     const [bookFolderId, setBookFolderId] = useState<Record<string, string | null>>({});
     const [viewMode, setViewMode] = useState<LibraryViewMode>("grid");
@@ -71,18 +117,16 @@ export default function Home() {
     const [nameFilter, setNameFilter] = useState("");
     const [mutaCarteTarget, setMutaCarteTarget] = useState<any>(null);
 
-    useEffect(() => {
-        setUserRol(typeof window !== "undefined" ? localStorage.getItem("rol") : null);
-    }, []);
-
+    /* --- Efecte: credite guest, persistenta UI biblioteca --- */
     useEffect(() => {
         if (!isGuestSession()) {
             setGuestCredits(null);
             return;
         }
         fetchGuestCredits().then(setGuestCredits).catch(() => setGuestCredits(null));
-    }, [userRol, isLoading]);
+    }, [isLoading]);
 
+    /** Incarca setarile bibliotecii din localStorage la mount. */
     useEffect(() => {
         const s = loadLibraryUi();
         setFolders(s.folders);
@@ -93,10 +137,12 @@ export default function Home() {
         setNameFilter(s.nameFilter ?? "");
     }, []);
 
+    /** Salveaza setarile bibliotecii in localStorage la fiecare schimbare. */
     useEffect(() => {
         saveLibraryUi({ folders, bookFolderId, viewMode, sortKey, sortDir, nameFilter });
     }, [folders, bookFolderId, viewMode, sortKey, sortDir, nameFilter]);
 
+    /** Asculta evenimente flyout filtre din header (AppShell). */
     useEffect(() => {
         const onFilters = (e: Event) => {
             const ce = e as CustomEvent<LibraryFiltersDetail>;
@@ -110,6 +156,7 @@ export default function Home() {
         return () => window.removeEventListener(LIBRARY_FILTERS_CHANGE_EVENT, onFilters);
     }, []);
 
+    /** Reincarca lista dosare cand se creeaza unul nou din header. */
     useEffect(() => {
         const onFolders = () => {
             setFolders(loadLibraryUi().folders);
@@ -118,6 +165,7 @@ export default function Home() {
         return () => window.removeEventListener(LIBRARY_FOLDERS_CHANGED_EVENT, onFolders);
     }, []);
 
+    /** Sincronizeaza modul grid/list cu toggle-ul din header. */
     useEffect(() => {
         const onViewMode = (e: Event) => {
             const ce = e as CustomEvent<{ mode: LibraryViewMode }>;
@@ -129,10 +177,22 @@ export default function Home() {
         return () => window.removeEventListener("audiobooks-library-view-mode", onViewMode);
     }, []);
 
+    /** Asculta evenimente globale de la AppShell (modal URL, editor text, biblioteca). */
     useEffect(() => {
-        const deschideFereastraUrl = () => setIsModalOpen(true);
-        const deschideEcranText = () => { setCarteaCurenta(null); setShowTextEditor(true); };
-        const arataBiblioteca = () => { setCarteaCurenta(null); setShowTextEditor(false); };
+        const deschideFereastraUrl = () => {
+            resetGenStreamUi();
+            setIsModalOpen(true);
+        };
+        const deschideEcranText = () => {
+            resetGenStreamUi();
+            setDocumentExtractMeta(null);
+            setCarteaCurenta(null);
+            setShowTextEditor(true);
+        };
+        const arataBiblioteca = () => {
+            setCarteaCurenta(null);
+            setShowTextEditor(false);
+        };
 
         window.addEventListener("deschide-modal-url", deschideFereastraUrl);
         window.addEventListener("deschide-modal-text", deschideEcranText);
@@ -143,24 +203,30 @@ export default function Home() {
             window.removeEventListener("deschide-modal-text", deschideEcranText);
             window.removeEventListener("arata-biblioteca", arataBiblioteca);
         };
-    }, []);
+    }, [resetGenStreamUi]);
 
+    /** Preia text extras din upload document (flyout AppShell). */
     useEffect(() => {
         const onDocumentText = (e: Event) => {
-            const ce = e as CustomEvent<{ titlu: string; text: string }>;
+            const ce = e as CustomEvent<{ titlu: string; text: string; extract_meta?: DocumentExtractMeta | null }>;
             if (!ce.detail?.text) return;
+            resetGenStreamUi();
             setTitluText(ce.detail.titlu || t("home.defaultDocument"));
             setTextManual(ce.detail.text);
+            setDocumentExtractMeta(ce.detail.extract_meta ?? null);
             setCarteaCurenta(null);
             setShowTextEditor(true);
             setIsModalOpen(false);
         };
         window.addEventListener("document-text-incarcat", onDocumentText);
         return () => window.removeEventListener("document-text-incarcat", onDocumentText);
-    }, []);
+    }, [resetGenStreamUi, t]);
 
+    /**
+     * Incarca istoricul cartilor (GET /istoric); serverul filtreaza dupa JWT.
+     * Asculta eveniment reincarca-istoric dupa generari batch.
+     */
     useEffect(() => {
-        // Reincarca lista din backend: serverul filtreaza dupa JWT (admin vede tot, restul doar propriul created_by_email).
         const fetchIstoric = async () => {
             try {
                 const response = await fetch(`${API_BASE}/istoric`, { headers: authHeadersJson() });
@@ -182,7 +248,6 @@ export default function Home() {
                             link_audio: item.audio_link,
                             text_extras: item.text_curatat,
                             data_generare: new Date(item.creat_la).toLocaleDateString(locale === "en" ? "en-GB" : "ro-RO"),
-                            is_public: Boolean(item.is_public),
                             creat_la_ts: Number.isFinite(ts) ? ts : 0,
                             lungime_text: typeof txt === "string" ? txt.length : 0,
                         };
@@ -201,6 +266,7 @@ export default function Home() {
         return () => window.removeEventListener("reincarca-istoric", reincarca);
     }, [router, t, locale]);
 
+    /** Incarca segmentele playlist pentru cartea selectata din biblioteca. */
     useEffect(() => {
         if (!carteaCurenta?.id) {
             setLibSegments([]);
@@ -208,7 +274,7 @@ export default function Home() {
         }
         let cancelled = false;
         (async () => {
-            const rows = await fetchCarteSegmente(Number(carteCurenta.id));
+            const rows = await fetchCarteSegmente(Number(carteaCurenta.id));
             if (cancelled) return;
             const mode = (carteaCurenta.playlist_mode as PlaylistMode) || (rows.some((r) => r.chapter_index != null) ? "chapters" : "parts");
             setLibPlaylistMode(mode);
@@ -217,7 +283,16 @@ export default function Home() {
         return () => { cancelled = true; };
     }, [carteaCurenta?.id, carteaCurenta?.playlist_mode]);
 
+    /* --- Handlere: streaming generare, finalizare carte --- */
+    /** Actualizeaza UI la fiecare eveniment din fluxul SSE de generare. */
     const applyStreamEvent = (evt: GenerationStreamEvent): Record<string, unknown> | null | "error" => {
+        if (evt.type === "job") {
+            genJobIdRef.current = evt.job_id;
+            return null;
+        }
+        if (evt.type === "cancelled") {
+            return null;
+        }
         if (evt.type === "playlist_mode") {
             setGenPlaylistMode(evt.mode);
             return null;
@@ -251,6 +326,7 @@ export default function Home() {
         return null;
     };
 
+    /** Adauga cartea noua in biblioteca dupa evenimentul "done" din stream. */
     const finalizeCarteFromStream = (
         data: Record<string, unknown>,
         meta: { titlu: string; url_sursa: string },
@@ -272,7 +348,6 @@ export default function Home() {
             link_audio: data.link_audio,
             text_extras: data.text_final_audio,
             data_generare: new Date().toLocaleDateString(locale === "en" ? "en-GB" : "ro-RO"),
-            is_public: Boolean(data.is_public),
             creat_la_ts: now,
             lungime_text: tf.length,
             segments: segs,
@@ -284,8 +359,15 @@ export default function Home() {
         setLibSegments(segs as GenerationSegment[]);
         setLibPlaylistMode(carteNoua.playlist_mode);
         setShowTextEditor(false);
-        setGenPhase(null);
+        setIsModalOpen(false);
+        resetGenStreamUi();
         window.dispatchEvent(new Event("reseteaza-meniu"));
+    };
+
+    /** Persist vocea TTS aleasa (localStorage, partajata intre surse). */
+    const handleTtsVoiceChange = (voiceId: string) => {
+        setTtsVoice(voiceId);
+        setStoredTtsVoice(voiceId);
     };
 
     /** POST /extrage/stream: URL → extract + TTS cu playlist live. */
@@ -298,21 +380,21 @@ export default function Home() {
         setGenPlaylistMode("parts");
         setIsGuestPreviewGen(false);
         let success = false;
+        const signal = beginGenerationRequest();
         try {
-            let donePayload: Record<string, unknown> | null = null;
-            await streamExtrageUrl(
-                { url, force_regenerate: forceRegenerate },
+            const donePayload = await streamExtrageUrl(
+                { url, force_regenerate: forceRegenerate, tts_voice: ttsVoice },
                 (evt) => {
                     const r = applyStreamEvent(evt);
                     if (r === "error") return;
-                    if (r) donePayload = r;
                 },
+                signal,
             );
             if (!donePayload) {
                 alert(t("home.alertUrlError"));
                 return;
             }
-            if (donePayload.from_cache) {
+            if (donePayload["from_cache"]) {
                 const data = donePayload;
                 const rows = await fetchCarteSegmente(Number(data.id));
                 const mode = rows.some((r) => r.chapter_index != null) ? "chapters" : "parts";
@@ -324,7 +406,6 @@ export default function Home() {
                     link_audio: data.link_audio,
                     text_extras: data.text_final_audio,
                     data_generare: new Date().toLocaleDateString(locale === "en" ? "en-GB" : "ro-RO"),
-                    is_public: Boolean(data.is_public),
                     playlist_mode: mode,
                 };
                 setCarteaCurenta(carteNoua);
@@ -336,18 +417,20 @@ export default function Home() {
             success = true;
             finalizeCarteFromStream(donePayload, { titlu: String(donePayload.titlu || t("home.webArticle")), url_sursa: url });
         } catch (err) {
+            if (isAbortError(err)) return;
             const msg = err instanceof Error && err.message ? err.message : t("home.alertServerError");
             alert(msg);
         } finally {
+            if (genAbortRef.current?.signal === signal) {
+                genAbortRef.current = null;
+            }
             setIsLoading(false);
             if (success) {
                 setIsModalOpen(false);
                 setUrl("");
-                setGenSegments([]);
-                setGenPhase(null);
+                resetGenStreamUi();
             } else {
-                setGenPhase(null);
-                setGenSegments([]);
+                resetGenStreamUi();
             }
         }
     };
@@ -368,15 +451,15 @@ export default function Home() {
         setGenSegments([]);
         setGenPlaylistMode(charLen >= 50000 ? "chapters" : "parts");
         let success = false;
+        const signal = beginGenerationRequest();
         try {
-            let donePayload: Record<string, unknown> | null = null;
-            await streamGenereazaText(
-                { titlu: titluText, text: textManual, curata_cu_gemini: curataCuGemini },
+            const donePayload = await streamGenereazaText(
+                { titlu: titluText, text: textManual, curata_cu_gemini: curataCuGemini, tts_voice: ttsVoice },
                 (evt) => {
                     const r = applyStreamEvent(evt);
                     if (r === "error") return;
-                    if (r) donePayload = r;
                 },
+                signal,
             );
             if (!donePayload) {
                 alert(t("home.alertTextGenerateError"));
@@ -385,54 +468,32 @@ export default function Home() {
             success = true;
             finalizeCarteFromStream(donePayload, { titlu: titluText, url_sursa: t("home.manualSourceValue") });
         } catch (err) {
+            if (isAbortError(err)) return;
             const msg = err instanceof Error && err.message ? err.message : t("home.alertTextGenerateError");
             alert(msg);
         } finally {
+            if (genAbortRef.current?.signal === signal) {
+                genAbortRef.current = null;
+            }
             setIsLoading(false);
             if (success) {
                 setTitluText("");
                 setTextManual("");
             }
             if (!success) {
-                setGenPhase(null);
-                setGenSegments([]);
-                setGenSegmentsTotal(null);
-                setGenActiveSegment(null);
+                resetGenStreamUi();
             }
         }
     };
 
+    /* --- Handlere: meniu contextual pe card carte --- */
     /** Meniu contextual pe card (redenumire, descarcare, stergere): un singur deschis o data. */
     const toggleMeniu = (e: React.MouseEvent, id: number) => {
         e.stopPropagation();
         setMeniuDeschisId(meniuDeschisId === id ? null : id);
     };
 
-    /** PATCH /carti/:id/public: comuta is_public; backend refuza oaspetii si cartile altora (in afara de admin). */
-    const togglePublicCarte = async (e: React.MouseEvent | React.ChangeEvent, carte: any) => {
-        e.stopPropagation();
-        try {
-            const res = await fetch(`${API_BASE}/carti/${carte.id}/public`, {
-                method: "PATCH",
-                headers: authHeadersJson(),
-                body: JSON.stringify({ is_public: !carte.is_public }),
-            });
-            const j = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                alert(typeof j.detail === "string" ? j.detail : t("home.alertPublicError"));
-                return;
-            }
-            setIstoricCarti((prev) =>
-                prev.map((c) => (c.id === carte.id ? { ...c, is_public: !carte.is_public } : c)),
-            );
-            if (carteaCurenta?.id === carte.id) {
-                setCarteaCurenta({ ...carteaCurenta, is_public: !carte.is_public });
-            }
-        } catch {
-            alert(t("home.alertNetworkError"));
-        }
-    };
-
+    /* --- Handlere: meniu contextual carte (share, download, redenumire, stergere) --- */
     const handleShare = (e: React.MouseEvent, link: string) => {
         e.stopPropagation();
         navigator.clipboard.writeText(link);
@@ -509,12 +570,14 @@ export default function Home() {
         }
     };
 
+    /** Inchide meniul contextual la click in afara cardului. */
     useEffect(() => {
         const handleClickOutside = () => setMeniuDeschisId(null);
         window.addEventListener("click", handleClickOutside);
         return () => window.removeEventListener("click", handleClickOutside);
     }, []);
 
+    /* --- Derived: filtrare, sortare, sectiuni dosare --- */
     const cartiFiltrate = useMemo(() => {
         let list = [...istoricCarti];
         const q = nameFilter.trim().toLowerCase();
@@ -534,6 +597,7 @@ export default function Home() {
 
     type CarteRow = (typeof istoricCarti)[number];
 
+    /** Grupeaza cartile filtrate pe dosare + sectiunea "nefolderate". */
     const librarySections = useMemo(() => {
         const unfiledLabel = t("library.sectionUnfiled");
         const resolveFolder = (c: CarteRow): string | null => {
@@ -581,6 +645,7 @@ export default function Home() {
         return sections;
     }, [cartiFiltrate, folders, bookFolderId, t]);
 
+    /* --- Handlere: dosare biblioteca --- */
     const stergeDosar = (e: React.MouseEvent, folderId: string) => {
         e.stopPropagation();
         setFolders((prev) => prev.filter((f) => f.id !== folderId));
@@ -597,7 +662,7 @@ export default function Home() {
         <div className="flex flex-col h-full relative p-4 lg:p-8">
 
             {carteaCurenta ? (
-                /* ── Audio Player Screen ── */
+                /* --- Ecran redare audio: player, text extras --- */
                 <div
                     className="w-full max-w-4xl mx-auto p-10 rounded-3xl mt-4"
                     style={{
@@ -650,23 +715,18 @@ export default function Home() {
                             border: "1px solid var(--border-card)",
                         }}
                     >
-                        {libSegments.length > 0 ? (
-                            <GenerationPlaylist
-                                segments={libSegments}
-                                phase={null}
-                                segmentsTotal={libSegments.length}
-                                playlistMode={libPlaylistMode}
-                                activeIndex={genActiveSegment}
-                                onActiveChange={setGenActiveSegment}
-                                isGuestPreview={Boolean(carteaCurenta.is_guest_preview)}
-                                onGuestPreviewFinished={() => setShowGuestSignupPrompt(true)}
-                            />
-                        ) : (
-                            <audio controls className="w-full max-w-2xl" preload="metadata">
-                                <source src={carteaCurenta.link_audio} type="audio/mpeg" />
-                                {t("home.audioUnsupported")}
-                            </audio>
-                        )}
+                        <GenerationPlaylist
+                            segments={libSegments}
+                            phase={null}
+                            segmentsTotal={libSegments.length}
+                            playlistMode={libPlaylistMode}
+                            activeIndex={genActiveSegment}
+                            onActiveChange={setGenActiveSegment}
+                            isGuestPreview={Boolean(carteaCurenta.is_guest_preview)}
+                            onGuestPreviewFinished={() => setShowGuestSignupPrompt(true)}
+                            fullAudioUrl={carteaCurenta.link_audio}
+                            variant="library"
+                        />
                     </div>
 
                     <div>
@@ -692,7 +752,7 @@ export default function Home() {
 
             ) : showTextEditor ? (
 
-                /* ── Text Editor Screen ── */
+                /* --- Ecran editor text manual si generare --- */
                 <div
                     className="w-full max-w-4xl mx-auto flex flex-col mt-4"
                     style={{ height: "85vh", animation: "fade-in 0.3s ease-out" }}
@@ -722,6 +782,42 @@ export default function Home() {
                             />
                         </div>
 
+                        {documentExtractMeta ? (
+                            <div
+                                className="mb-4 mx-1 p-4 rounded-2xl text-sm space-y-2"
+                                style={{
+                                    background: "var(--card-bg-muted)",
+                                    border: "1px solid var(--divider)",
+                                }}
+                            >
+                                <p className="text-xs font-extrabold uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+                                    {t("gen.extractPreviewTitle")}
+                                    {documentExtractMeta.source_type ? ` · ${documentExtractMeta.source_type.toUpperCase()}` : ""}
+                                </p>
+                                {documentExtractMeta.page_count != null ? (
+                                    <p style={{ color: "var(--text-body)" }}>
+                                        {t("gen.extractPageStats")}: {documentExtractMeta.pages_with_text ?? 0} / {documentExtractMeta.page_count}
+                                        {(documentExtractMeta.pages_empty ?? 0) > 0 ? (
+                                            <span className="text-xs block mt-1" style={{ color: "var(--text-muted)" }}>
+                                                ⚠ {documentExtractMeta.pages_empty} {t("gen.extractEmptyPages")}
+                                            </span>
+                                        ) : null}
+                                        {(documentExtractMeta.pages_ocr ?? 0) > 0 ? (
+                                            <span className="text-xs block mt-0.5" style={{ color: "var(--text-muted)" }}>
+                                                {documentExtractMeta.pages_ocr} {t("gen.extractOcrPages")}
+                                            </span>
+                                        ) : null}
+                                    </p>
+                                ) : null}
+                                {documentExtractMeta.extract_preview ? (
+                                    <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                                        <span className="font-semibold">{t("gen.extractStartsWith")}: </span>
+                                        «{documentExtractMeta.extract_preview}»
+                                    </p>
+                                ) : null}
+                            </div>
+                        ) : null}
+
                         <textarea
                             placeholder={t("home.textPlaceholder")}
                             className="w-full flex-1 border-0 p-4 resize-none leading-relaxed text-lg bg-transparent"
@@ -749,6 +845,12 @@ export default function Home() {
                                 {t("gen.guestPreviewHint")}
                             </p>
                         ) : null}
+
+                        <TtsVoicePicker
+                            value={ttsVoice}
+                            onChange={handleTtsVoiceChange}
+                            disabled={isLoading}
+                        />
 
                         <label
                             className="mt-3 flex items-start gap-3 px-1 cursor-pointer select-none"
@@ -783,9 +885,29 @@ export default function Home() {
                         ) : null}
 
                         <div
-                            className="mt-6 pt-6 flex justify-center"
+                            className="mt-6 pt-6 flex justify-center gap-3 flex-wrap"
                             style={{ borderTop: "1px solid var(--divider)" }}
                         >
+                            {(isLoading || genPhase) ? (
+                                <button
+                                    type="button"
+                                    onClick={cancelGeneration}
+                                    className="px-8 py-4 font-extrabold text-base rounded-full transition-all duration-200"
+                                    style={{
+                                        color: "var(--text-muted)",
+                                        border: "2px solid var(--divider)",
+                                        background: "var(--card-bg)",
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.backgroundColor = "var(--hover-bg)";
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.backgroundColor = "var(--card-bg)";
+                                    }}
+                                >
+                                    {t("gen.cancelGeneration")}
+                                </button>
+                            ) : null}
                             <button
                                 onClick={handleGenereazaDinText}
                                 disabled={isLoading}
@@ -814,7 +936,7 @@ export default function Home() {
 
             ) : (
 
-                /* ── Library Screen ── */
+                /* --- Ecran biblioteca: grid/list pe dosare --- */
                 <div className="flex-1 flex flex-col items-center justify-center relative">
                     {istoricCarti.length === 0 ? (
                         <div className="mt-[-10vh] text-center" style={{ animation: "fade-in 0.4s ease-out" }}>
@@ -883,7 +1005,9 @@ export default function Home() {
                                 {section.books.map((carte) => (
                                     <div
                                         key={carte.id}
-                                        className="rounded-2xl cursor-pointer group flex flex-col h-full relative overflow-hidden"
+                                        className={`rounded-2xl cursor-pointer group flex flex-col h-full relative overflow-visible ${
+                                            meniuDeschisId === carte.id ? "z-30" : ""
+                                        }`}
                                         style={{
                                             background: "var(--card-bg)",
                                             boxShadow: "var(--shadow-card-sm)",
@@ -902,7 +1026,7 @@ export default function Home() {
                                             e.currentTarget.style.borderColor = "var(--border-card)";
                                         }}
                                     >
-                                        {/* Gradient top accent */}
+                                        {/* Accent gradient sus la hover */}
                                         <div
                                             className="absolute top-0 left-0 right-0 h-0.5"
                                             style={{
@@ -922,27 +1046,7 @@ export default function Home() {
                                         />
 
                                         <div className="p-5 flex flex-col h-full">
-                                            {/* Public in catalog (doar admin + user; guest nu poate) */}
-                                            {(userRol === "admin" || userRol === "user") && (
-                                                <label
-                                                    className="absolute top-3.5 right-11 z-10 flex items-center gap-1 cursor-pointer select-none"
-                                                    style={{ fontSize: "10px", fontWeight: 800, color: "var(--text-muted)" }}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                    onMouseDown={(e) => e.stopPropagation()}
-                                                >
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={Boolean(carte.is_public)}
-                                                        onChange={(e) => {
-                                                            void togglePublicCarte(e, carte);
-                                                        }}
-                                                        className="rounded border accent-mid-green"
-                                                        style={{ borderColor: "var(--input-border)" }}
-                                                    />
-                                                    <span>{t("home.public")}</span>
-                                                </label>
-                                            )}
-                                            {/* Kebab menu button */}
+                                            {/* Buton meniu kebab */}
                                             <button
                                                 onClick={(e) => toggleMeniu(e, carte.id)}
                                                 className="absolute top-3.5 right-3.5 w-8 h-8 flex items-center justify-center rounded-full font-bold text-lg z-10 transition-all duration-150"
@@ -959,10 +1063,10 @@ export default function Home() {
                                                 ⋮
                                             </button>
 
-                                            {/* Dropdown menu */}
+                                            {/* Meniu dropdown actiuni carte */}
                                             {meniuDeschisId === carte.id && (
                                                 <div
-                                                    className="absolute top-11 right-3.5 rounded-xl py-1.5 w-48 z-20"
+                                                    className="absolute top-11 right-3.5 rounded-xl py-1.5 w-48 z-50"
                                                     style={{
                                                         animation: "fade-in 0.2s ease-out",
                                                         background: "var(--card-bg)",
@@ -1012,7 +1116,7 @@ export default function Home() {
                                                             e.currentTarget.style.color = "var(--text-body)";
                                                         }}
                                                     >
-                                                        <span className="mr-3 opacity-60">📁</span>
+                                                        <span className="mr-3 opacity-60">▤</span>
                                                         {t("home.moveToFolder")}
                                                     </button>
                                                     <div className="my-1" style={{ borderTop: "1px solid var(--divider)" }} />
@@ -1035,7 +1139,7 @@ export default function Home() {
                                                 </div>
                                             )}
 
-                                            {/* Card icon */}
+                                            {/* Iconita card */}
                                             <div
                                                 className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 text-lg transition-transform duration-200 group-hover:scale-110"
                                                 style={{
@@ -1046,7 +1150,7 @@ export default function Home() {
                                                 🎧
                                             </div>
 
-                                            {/* Card title */}
+                                            {/* Titlu card */}
                                             <h3
                                                 className="font-extrabold mb-1 pr-16 leading-snug"
                                                 style={{
@@ -1060,7 +1164,7 @@ export default function Home() {
                                                 {carte.titlu}
                                             </h3>
 
-                                            {/* Card source */}
+                                            {/* Sursa card */}
                                             <p
                                                 className="text-xs font-medium mb-4 truncate flex-grow"
                                                 style={{ color: "var(--text-muted)" }}
@@ -1069,7 +1173,7 @@ export default function Home() {
                                                 {carte.url_sursa}
                                             </p>
 
-                                            {/* Card footer */}
+                                            {/* Footer card: data si CTA asculta */}
                                             <div
                                                 className="flex justify-between items-center text-xs font-bold mt-auto pt-4"
                                                 style={{
@@ -1093,7 +1197,9 @@ export default function Home() {
                                 {section.books.map((carte) => (
                                     <div
                                         key={carte.id}
-                                        className="rounded-2xl cursor-pointer group flex flex-row items-center gap-3 w-full relative overflow-hidden py-3 pl-3 pr-3 sm:pl-4 sm:pr-4"
+                                        className={`rounded-2xl cursor-pointer group flex flex-row items-center gap-3 w-full relative overflow-visible py-3 pl-3 pr-3 sm:pl-4 sm:pr-4 ${
+                                            meniuDeschisId === carte.id ? "z-30" : ""
+                                        }`}
                                         style={{
                                             background: "var(--card-bg)",
                                             boxShadow: "var(--shadow-card-sm)",
@@ -1108,25 +1214,6 @@ export default function Home() {
                                             e.currentTarget.style.borderColor = "var(--border-card)";
                                         }}
                                     >
-                                        {(userRol === "admin" || userRol === "user") && (
-                                            <label
-                                                className="absolute top-2 left-2 z-10 flex items-center gap-1 cursor-pointer select-none"
-                                                style={{ fontSize: "10px", fontWeight: 800, color: "var(--text-muted)" }}
-                                                onClick={(e) => e.stopPropagation()}
-                                                onMouseDown={(e) => e.stopPropagation()}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={Boolean(carte.is_public)}
-                                                    onChange={(e) => {
-                                                        void togglePublicCarte(e, carte);
-                                                    }}
-                                                    className="rounded border accent-mid-green scale-90"
-                                                    style={{ borderColor: "var(--input-border)" }}
-                                                />
-                                                <span>{t("home.public")}</span>
-                                            </label>
-                                        )}
                                         <button
                                             type="button"
                                             onClick={(e) => toggleMeniu(e, carte.id)}
@@ -1145,7 +1232,7 @@ export default function Home() {
                                         </button>
                                         {meniuDeschisId === carte.id && (
                                             <div
-                                                className="absolute top-11 right-2 rounded-xl py-1.5 w-48 z-20"
+                                                className="absolute top-11 right-2 rounded-xl py-1.5 w-48 z-50"
                                                 style={{
                                                     animation: "fade-in 0.2s ease-out",
                                                     background: "var(--card-bg)",
@@ -1196,7 +1283,7 @@ export default function Home() {
                                                         e.currentTarget.style.color = "var(--text-body)";
                                                     }}
                                                 >
-                                                    <span className="mr-3 opacity-60">📁</span>
+                                                    <span className="mr-3 opacity-60">▤</span>
                                                     {t("home.moveToFolder")}
                                                 </button>
                                                 <div className="my-1" style={{ borderTop: "1px solid var(--divider)" }} />
@@ -1258,7 +1345,7 @@ export default function Home() {
                 </div>
             )}
 
-            {/* ── URL Modal ── */}
+            {/* --- Modal URL: extragere si generare din link web --- */}
             {isModalOpen && (
                 <div
                     className="fixed inset-0 flex items-center justify-center z-50 p-4"
@@ -1309,6 +1396,13 @@ export default function Home() {
                             onChange={(e) => setUrl(e.target.value)}
                         />
 
+                        <TtsVoicePicker
+                            value={ttsVoice}
+                            onChange={handleTtsVoiceChange}
+                            disabled={isLoading}
+                            compact
+                        />
+
                         <label
                             className="flex items-center space-x-3 mb-8 cursor-pointer p-4 rounded-xl transition-colors duration-150"
                             style={{ background: "var(--card-bg-muted)" }}
@@ -1342,14 +1436,20 @@ export default function Home() {
 
                         <div className="flex justify-end space-x-3">
                             <button
-                                onClick={() => setIsModalOpen(false)}
-                                disabled={isLoading}
+                                onClick={() => {
+                                    if (isLoading) {
+                                        cancelGeneration();
+                                        return;
+                                    }
+                                    setIsModalOpen(false);
+                                    resetGenStreamUi();
+                                }}
                                 className="px-6 py-3 font-bold rounded-xl text-sm transition-colors duration-150"
                                 style={{ color: "var(--text-muted)" }}
                                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-bg)")}
                                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
                             >
-                                {t("library.modalCancel")}
+                                {isLoading ? t("gen.cancelGeneration") : t("library.modalCancel")}
                             </button>
                             <button
                                 onClick={handleGenereaza}
@@ -1373,7 +1473,7 @@ export default function Home() {
                 </div>
             )}
 
-            {/* ── Rename Modal ── */}
+            {/* --- Modal redenumire carte --- */}
             {modalRedenumire && (
                 <div
                     className="fixed inset-0 flex items-center justify-center z-50 p-4"
@@ -1443,7 +1543,7 @@ export default function Home() {
                 </div>
             )}
 
-            {/* ── Toast ── */}
+            {/* --- Toast confirmare (ex. link copiat) --- */}
             {toastMessage && (
                 <div
                     className="fixed bottom-10 left-1/2 -translate-x-1/2 text-white px-6 py-3 rounded-full flex items-center space-x-3 z-50"
@@ -1458,7 +1558,7 @@ export default function Home() {
                 </div>
             )}
 
-            {/* ── Delete Confirmation Modal ── */}
+            {/* --- Modal confirmare stergere --- */}
             {modalStergere && (
                 <div
                     className="fixed inset-0 flex items-center justify-center z-50 p-4"
@@ -1521,7 +1621,7 @@ export default function Home() {
                 </div>
             )}
 
-            {/* ── Mută în dosar ── */}
+            {/* --- Modal muta carte in dosar --- */}
             {mutaCarteTarget && (
                 <div
                     className="fixed inset-0 flex items-center justify-center z-50 p-4"
@@ -1602,6 +1702,7 @@ export default function Home() {
                     </div>
                 </div>
             )}
+            {/* --- Prompt inregistrare dupa preview guest --- */}
             {showGuestSignupPrompt && (
                 <div
                     className="fixed inset-0 flex items-center justify-center z-[60] p-4"

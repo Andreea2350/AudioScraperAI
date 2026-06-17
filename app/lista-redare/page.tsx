@@ -5,10 +5,13 @@
  * in ordinea randurilor. Drag-and-drop reordoneaza; fiecare rand are propriul status in UI.
  */
 import { useCallback, useMemo, useRef, useState } from "react";
-import { API_BASE, authHeadersJson, authHeadersMultipart, isGuestSession } from "@/lib/api";
+import { API_BASE, authHeadersJson, authHeadersMultipart, isAbortError, isGuestSession } from "@/lib/api";
 import { DOCUMENT_FILE_ACCEPT, IMAGE_FILE_ACCEPT, isImageUploadFile } from "@/lib/fileUploadAccept";
 import { useI18n } from "@/lib/i18n";
+import { TtsVoicePicker } from "@/components/TtsVoicePicker";
+import { getStoredTtsVoice, setStoredTtsVoice } from "@/lib/ttsVoiceStorage";
 
+/** Status posibil al unui rand din lista de redare. */
 export type PlaylistItemStatus =
     | "pregatit"
     | "asteptare"
@@ -17,8 +20,10 @@ export type PlaylistItemStatus =
     | "gata"
     | "eroare";
 
+/** Tip sursa: link web sau document incarcat. */
 export type PlaylistSourceKind = "url" | "document";
 
+/** Rand din coada playlist-ului batch. */
 export type PlaylistItem = {
     id: string;
     sourceKind: PlaylistSourceKind;
@@ -30,15 +35,17 @@ export type PlaylistItem = {
     errorMessage?: string;
 };
 
+/** Genereaza ID unic pentru rand nou (crypto.randomUUID sau fallback). */
 function newId() {
     return typeof crypto !== "undefined" && crypto.randomUUID
         ? crypto.randomUUID()
         : `pl-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-
 export default function ListaRedarePage() {
     const { t } = useI18n();
+
+    /** Etichete traduse pentru statusul fiecarui rand din playlist. */
     const statusLabels = useMemo(
         (): Record<PlaylistItemStatus, string> => ({
             pregatit: t("playlist.statusReady"),
@@ -50,21 +57,46 @@ export default function ListaRedarePage() {
         }),
         [t],
     );
+
+    /* --- Stare: randuri playlist, modal URL, drag, batch --- */
     const [items, setItems] = useState<PlaylistItem[]>([]);
     const [urlInput, setUrlInput] = useState("");
     const [urlModalOpen, setUrlModalOpen] = useState(false);
     const [batchRunning, setBatchRunning] = useState(false);
     const [dragId, setDragId] = useState<string | null>(null);
     const [imageLockedMsg, setImageLockedMsg] = useState<string | null>(null);
+    const [ttsVoice, setTtsVoice] = useState(() => getStoredTtsVoice());
     const isGuest = isGuestSession();
     const docRef = useRef<HTMLInputElement>(null);
     const imgRef = useRef<HTMLInputElement>(null);
+    const batchAbortRef = useRef<AbortController | null>(null);
 
+    const cancelBatch = useCallback(() => {
+        if (typeof window !== "undefined" && !window.confirm(t("gen.cancelConfirm"))) {
+            return;
+        }
+        batchAbortRef.current?.abort();
+        batchAbortRef.current = null;
+        setBatchRunning(false);
+        setItems((prev) =>
+            prev.map((it) =>
+                it.status === "generare"
+                    ? { ...it, status: "pregatit", errorMessage: undefined }
+                    : it,
+            ),
+        );
+    }, [t]);
+
+    /* --- Handlere: adaugare surse (URL, fisier) --- */
+    /** Valideaza URL si adauga un rand nou in coada. */
     const addUrl = () => {
         const u = urlInput.trim();
         if (!u) return;
         try {
-            // Folosim constructorul URL strict ca validator; eslint se plange de "new pentru side effect" fara variabila.
+            /**
+             * Folosim constructorul URL strict ca validator;
+             * eslint se plange de "new pentru side effect" fara variabila.
+             */
             // eslint-disable-next-line no-new
             new URL(u);
         } catch {
@@ -85,6 +117,7 @@ export default function ListaRedarePage() {
         setUrlModalOpen(false);
     };
 
+    /** POST /extrage_fisier: extrage text din document sau imagine. */
     const extractFile = useCallback(async (file: File) => {
         const fd = new FormData();
         fd.append("file", file);
@@ -106,6 +139,7 @@ export default function ListaRedarePage() {
         };
     }, [t]);
 
+    /** Adauga fisier in lista, extrage text si actualizeaza statusul randului. */
     const onPickFile = async (file: File | undefined) => {
         if (!file) return;
         if (isGuest && isImageUploadFile(file)) {
@@ -148,6 +182,7 @@ export default function ListaRedarePage() {
         }
     };
 
+    /* --- Handlere: reordonare, stergere rand --- */
     const removeItem = (id: string) => {
         setItems((prev) => prev.filter((x) => x.id !== id));
     };
@@ -163,6 +198,7 @@ export default function ListaRedarePage() {
         });
     };
 
+    /** Handlere drag-and-drop pentru reordonare randuri. */
     const onDragStart = (id: string) => setDragId(id);
     const onDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -184,6 +220,10 @@ export default function ListaRedarePage() {
         setDragId(null);
     };
 
+    /**
+     * Proceseaza coada in ordine: extrage URL sau genereaza din text,
+     * apoi declanseaza reincarca-istoric pe biblioteca.
+     */
     const runBatch = async () => {
         const queue = items.filter(
             (it) =>
@@ -195,7 +235,11 @@ export default function ListaRedarePage() {
             return;
         }
         setBatchRunning(true);
+        batchAbortRef.current?.abort();
+        const ac = new AbortController();
+        batchAbortRef.current = ac;
         for (const q of queue) {
+            if (ac.signal.aborted) break;
             setItems((prev) =>
                 prev.map((it) =>
                     it.id === q.id ? { ...it, status: "generare", errorMessage: undefined } : it,
@@ -206,7 +250,8 @@ export default function ListaRedarePage() {
                     const res = await fetch(`${API_BASE}/extrage`, {
                         method: "POST",
                         headers: authHeadersJson(),
-                        body: JSON.stringify({ url: q.url, force_regenerate: false }),
+                        body: JSON.stringify({ url: q.url, force_regenerate: false, tts_voice: ttsVoice }),
+                        signal: ac.signal,
                     });
                     const data = await res.json();
                     if (!res.ok) {
@@ -221,7 +266,8 @@ export default function ListaRedarePage() {
                     const res = await fetch(`${API_BASE}/genereaza_text`, {
                         method: "POST",
                         headers: authHeadersJson(),
-                        body: JSON.stringify({ titlu: q.titlu, text: q.extractedText }),
+                        body: JSON.stringify({ titlu: q.titlu, text: q.extractedText, tts_voice: ttsVoice }),
+                        signal: ac.signal,
                     });
                     const data = await res.json();
                     if (!res.ok) {
@@ -239,6 +285,16 @@ export default function ListaRedarePage() {
                     prev.map((it) => (it.id === q.id ? { ...it, status: "gata" } : it)),
                 );
             } catch (e) {
+                if (isAbortError(e)) {
+                    setItems((prev) =>
+                        prev.map((it) =>
+                            it.id === q.id
+                                ? { ...it, status: "pregatit", errorMessage: undefined }
+                                : it,
+                        ),
+                    );
+                    break;
+                }
                 const msg = e instanceof Error ? e.message : t("playlist.unknownError");
                 setItems((prev) =>
                     prev.map((it) =>
@@ -247,6 +303,7 @@ export default function ListaRedarePage() {
                 );
             }
         }
+        batchAbortRef.current = null;
         setBatchRunning(false);
         window.dispatchEvent(new Event("reincarca-istoric"));
     };
@@ -255,6 +312,7 @@ export default function ListaRedarePage() {
 
     return (
         <div className="p-4 lg:p-8 max-w-4xl mx-auto pb-24">
+            {/* Antet pagina lista de redare */}
             <div className="mb-8">
                 <h1 className="text-3xl font-extrabold tracking-tight mb-2" style={{ color: "var(--heading-on-surface)" }}>
                     {t("playlist.title")}
@@ -264,6 +322,19 @@ export default function ListaRedarePage() {
                 </p>
             </div>
 
+            <div className="mb-6 max-w-md">
+                <TtsVoicePicker
+                    value={ttsVoice}
+                    onChange={(id) => {
+                        setTtsVoice(id);
+                        setStoredTtsVoice(id);
+                    }}
+                    disabled={batchRunning}
+                    compact
+                />
+            </div>
+
+            {/* Butoane adaugare sursa: link, document, imagine */}
             <div className="flex flex-wrap gap-3 mb-6">
                 <button
                     type="button"
@@ -353,6 +424,7 @@ export default function ListaRedarePage() {
                 />
             </div>
 
+            {/* Lista randuri sau stare goala */}
             {items.length === 0 ? (
                 <div
                     className="rounded-2xl p-12 text-center border border-dashed"
@@ -474,8 +546,23 @@ export default function ListaRedarePage() {
                 </ul>
             )}
 
+            {/* Buton fix jos: genereaza batch pentru randurile pregatite */}
             {items.length > 0 && (
-                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 lg:left-[calc(50%+8rem)] z-40">
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 lg:left-[calc(50%+8rem)] z-40 flex gap-3">
+                    {batchRunning ? (
+                        <button
+                            type="button"
+                            onClick={cancelBatch}
+                            className="px-8 py-4 rounded-full font-extrabold text-sm shadow-lg"
+                            style={{
+                                color: "var(--text-muted)",
+                                border: "2px solid var(--divider)",
+                                background: "var(--card-bg)",
+                            }}
+                        >
+                            {t("gen.cancelGeneration")}
+                        </button>
+                    ) : null}
                     <button
                         type="button"
                         disabled={batchRunning || readyCount === 0}
@@ -491,6 +578,7 @@ export default function ListaRedarePage() {
                 </div>
             )}
 
+            {/* Modal adaugare link web */}
             {urlModalOpen && (
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center p-4"

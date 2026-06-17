@@ -208,7 +208,7 @@ export default function Home() {
         }
         let cancelled = false;
         (async () => {
-            const rows = await fetchCarteSegmente(Number(carteCurenta.id));
+            const rows = await fetchCarteSegmente(Number(carteaCurenta.id));
             if (cancelled) return;
             const mode = (carteaCurenta.playlist_mode as PlaylistMode) || (rows.some((r) => r.chapter_index != null) ? "chapters" : "parts");
             setLibPlaylistMode(mode);
@@ -299,20 +299,18 @@ export default function Home() {
         setIsGuestPreviewGen(false);
         let success = false;
         try {
-            let donePayload: Record<string, unknown> | null = null;
-            await streamExtrageUrl(
+            const donePayload = await streamExtrageUrl(
                 { url, force_regenerate: forceRegenerate },
                 (evt) => {
                     const r = applyStreamEvent(evt);
                     if (r === "error") return;
-                    if (r) donePayload = r;
                 },
             );
             if (!donePayload) {
                 alert(t("home.alertUrlError"));
                 return;
             }
-            if (donePayload.from_cache) {
+            if (donePayload["from_cache"]) {
                 const data = donePayload;
                 const rows = await fetchCarteSegmente(Number(data.id));
                 const mode = rows.some((r) => r.chapter_index != null) ? "chapters" : "parts";
@@ -369,13 +367,11 @@ export default function Home() {
         setGenPlaylistMode(charLen >= 50000 ? "chapters" : "parts");
         let success = false;
         try {
-            let donePayload: Record<string, unknown> | null = null;
-            await streamGenereazaText(
+            const donePayload = await streamGenereazaText(
                 { titlu: titluText, text: textManual, curata_cu_gemini: curataCuGemini },
                 (evt) => {
                     const r = applyStreamEvent(evt);
                     if (r === "error") return;
-                    if (r) donePayload = r;
                 },
             );
             if (!donePayload) {

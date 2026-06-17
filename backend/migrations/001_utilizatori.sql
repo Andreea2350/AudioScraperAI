@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS utilizatori (
     id          SERIAL PRIMARY KEY,
     email       TEXT UNIQUE NOT NULL,
     parola_hash TEXT NOT NULL,
-    rol         TEXT NOT NULL CHECK (rol IN ('admin', 'user', 'guest')),
+    rol         TEXT NOT NULL CHECK (rol IN ('admin', 'user')),
     creat_la    TIMESTAMPTZ DEFAULT NOW()
 );
 

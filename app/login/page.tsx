@@ -10,6 +10,7 @@ import { useI18n } from "@/lib/i18n";
 
 type UserRole = "admin" | "user" | "guest";
 
+/** Stiluri vizuale per rol (admin, user, guest) pentru selector si buton submit. */
 const roleStyles: Record<
     UserRole,
     {
@@ -55,6 +56,7 @@ const roleStyles: Record<
     },
 };
 
+/** Formateaza mesajul de eroare FastAPI (string sau array de validare). */
 function formatLoginError(detail: unknown, fallback: string): string {
     if (typeof detail === "string") return detail;
     if (Array.isArray(detail) && detail[0] && typeof detail[0] === "object" && "msg" in detail[0]) {
@@ -69,6 +71,8 @@ function formatLoginError(detail: unknown, fallback: string): string {
 function LoginPageContent() {
     const { t } = useI18n();
     const searchParams = useSearchParams();
+
+    /* --- Stare: formular login, inregistrare, rol --- */
     const [role, setRole] = useState<UserRole>("user");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -81,6 +85,7 @@ function LoginPageContent() {
     const [regMsg, setRegMsg] = useState<string | null>(null);
     const router = useRouter();
 
+    /** Config roluri cu etichete traduse (memoizat pe locale). */
     const roleConfig = useMemo(
         () =>
             ({
@@ -106,11 +111,14 @@ function LoginPageContent() {
         [t],
     );
 
+    /** Lista feature-uri pentru panoul de branding din stanga. */
     const brandFeatures = useMemo(
         () => [t("login.feature1"), t("login.feature2"), t("login.feature3")],
         [t],
     );
 
+    /* --- Efecte: mod inregistrare din query, redirect daca deja autentificat --- */
+    /** Deschide formularul de inregistrare daca URL contine ?inregistrare=1. */
     useEffect(() => {
         if (searchParams.get("inregistrare") === "1") {
             setModInregistrare(true);
@@ -131,6 +139,7 @@ function LoginPageContent() {
         // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionat doar la mount; router.replace e stabil
     }, []);
 
+    /* --- Handlere: inregistrare, login, oaspete anonim --- */
     /** POST /register: creeaza cont user cu email si parola. */
     const handleInregistrare = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -162,6 +171,7 @@ function LoginPageContent() {
         }
     };
 
+    /** POST /login cu rol guest: sesiune anonima cu guest_session_id persistent. */
     const intraCaOaspeteAnonim = async () => {
         setIsLoading(true);
         setError(null);
@@ -196,6 +206,7 @@ function LoginPageContent() {
         }
     };
 
+    /** POST /login: autentificare admin sau user cu email si parola. */
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         if (role === "guest") return;
@@ -233,12 +244,12 @@ function LoginPageContent() {
     return (
         <div className="min-h-screen flex" style={{ backgroundColor: "var(--page-bg)" }}>
 
-            {/* ── Left branding panel ── */}
+            {/* Panou branding stanga (desktop) */}
             <div
                 className="hidden lg:flex lg:w-[48%] relative overflow-hidden flex-col justify-between p-12"
                 style={{ background: "linear-gradient(145deg, #091413 0%, #285A48 55%, #408A71 100%)" }}
             >
-                {/* Decorative blobs */}
+                {/* Blob-uri decorative de fundal */}
                 <div className="absolute -top-24 -right-24 w-96 h-96 rounded-full opacity-20 blur-3xl"
                     style={{ background: "radial-gradient(circle, #B0E4CC, transparent)" }} />
                 <div className="absolute -bottom-20 -left-20 w-80 h-80 rounded-full opacity-15 blur-3xl"
@@ -246,7 +257,7 @@ function LoginPageContent() {
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-56 h-56 rounded-full opacity-10 blur-2xl"
                     style={{ background: "radial-gradient(circle, #B0E4CC, transparent)" }} />
 
-                {/* Logo */}
+                {/* Logo si subtitlu brand */}
                 <div className="relative z-10">
                     <div className="text-3xl font-extrabold tracking-wider mb-2" style={{ color: "#ffffff" }}>
                         AudioScraper<span style={{ color: "#B0E4CC" }}>AI</span>
@@ -256,7 +267,7 @@ function LoginPageContent() {
                     </div>
                 </div>
 
-                {/* Headline */}
+                {/* Titlu principal si lista feature-uri */}
                 <div className="relative z-10">
                     <h2 className="text-4xl font-extrabold leading-tight mb-8" style={{ color: "#ffffff" }}>
                         {t("login.headline")}
@@ -274,7 +285,7 @@ function LoginPageContent() {
                     </div>
                 </div>
 
-                {/* Bottom accent */}
+                {/* Accent decorativ jos */}
                 <div className="relative z-10 flex items-center space-x-2">
                     <div className="w-8 h-1 rounded-full" style={{ background: "#408A71" }} />
                     <div className="w-16 h-1 rounded-full" style={{ background: "#B0E4CC" }} />
@@ -282,7 +293,7 @@ function LoginPageContent() {
                 </div>
             </div>
 
-            {/* ── Right form panel ── */}
+            {/* Panou formular dreapta */}
             <div className="flex-1 flex items-center justify-center p-6 lg:p-10">
                 <div className="w-full max-w-md" style={{ animation: "slide-up 0.45s ease-out" }}>
 
@@ -300,14 +311,14 @@ function LoginPageContent() {
                         </div>
                     </div>
 
-                    {/* Mobile logo */}
+                    {/* Logo pe mobil */}
                         <div className="lg:hidden text-center mb-8">
                         <div className="text-2xl font-extrabold tracking-wider" style={{ color: "var(--heading-on-surface)" }}>
                             AudioScraper<span style={{ color: "var(--link-accent)" }}>AI</span>
                         </div>
                     </div>
 
-                    {/* Card */}
+                    {/* Card principal login / inregistrare */}
                     <div
                         className="rounded-3xl p-8"
                         style={{
@@ -316,7 +327,7 @@ function LoginPageContent() {
                             border: "1px solid var(--border-card)",
                         }}
                     >
-                        {/* Heading */}
+                        {/* Titlu card */}
                         <div className="mb-7">
                             <h1 className="text-2xl font-extrabold mb-1" style={{ color: "var(--text-primary)" }}>
                                 {modInregistrare ? t("login.registerTitle") : t("login.welcomeBack")}
@@ -329,6 +340,7 @@ function LoginPageContent() {
                         </div>
 
                         {modInregistrare ? (
+                            /* Formular inregistrare cont nou */
                             <form onSubmit={handleInregistrare} className="space-y-4 mb-6">
                                 <div>
                                     <label
@@ -397,7 +409,7 @@ function LoginPageContent() {
                             <div className="h-px mb-6" style={{ background: "var(--divider)" }} />
                         )}
 
-                        {/* Role selector + form autentificare */}
+                        {/* Selector rol + formular autentificare */}
                         {!modInregistrare ? (
                         <>
                         <div className="grid grid-cols-3 gap-3 mb-7">
@@ -443,13 +455,13 @@ function LoginPageContent() {
                             })}
                         </div>
 
-                        {/* Divider */}
+                        {/* Separator vizual */}
                         <div
                             className="h-px mb-7"
                             style={{ background: "linear-gradient(to right, transparent, #B0E4CC, transparent)" }}
                         />
 
-                        {/* Form */}
+                        {/* Formular email/parola sau buton oaspete */}
                         <form onSubmit={handleLogin} className="space-y-5">
 
                             {role === "guest" ? (
@@ -473,7 +485,7 @@ function LoginPageContent() {
                                 </div>
                             ) : null}
 
-                            {/* Email */}
+                            {/* Camp email */}
                             {role !== "guest" && (
                             <div>
                                 <label
@@ -510,7 +522,7 @@ function LoginPageContent() {
                             </div>
                             )}
 
-                            {/* Password */}
+                            {/* Camp parola cu toggle vizibilitate */}
                             {role !== "guest" && (
                             <div>
                                 <label
@@ -565,7 +577,7 @@ function LoginPageContent() {
                             </div>
                             )}
 
-                            {/* Error message */}
+                            {/* Mesaj eroare autentificare */}
                             {error && (
                                 <div
                                     className="flex items-start space-x-2 px-4 py-3 rounded-xl text-sm font-medium"
@@ -580,7 +592,7 @@ function LoginPageContent() {
                                 </div>
                             )}
 
-                            {/* Submit */}
+                            {/* Buton submit login */}
                             {role !== "guest" && (
                             <button
                                 type="submit"
@@ -626,7 +638,7 @@ function LoginPageContent() {
                         </>
                         ) : null}
 
-                        {/* Footer — doar mod autentificare */}
+                        {/* Footer link inregistrare (doar mod login) */}
                         {!modInregistrare ? (
                         <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>
                             {t("login.footerNoAccount")}{" "}
@@ -655,7 +667,7 @@ function LoginPageContent() {
     );
 }
 
-/** Pagina exportata: infasoara continutul in Suspense din cauza regulilor Next pentru useSearchParams. */
+/** Pagina exportata: infasoara continutul in Suspense (useSearchParams). */
 export default function LoginPage() {
     return (
         <Suspense

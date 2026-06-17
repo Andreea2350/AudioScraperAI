@@ -1,5 +1,6 @@
 "use client";
 
+/* Panou flyout pentru cautarea bibliotecii dupa titlu, cu filtru live. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -19,6 +20,7 @@ function SearchIcon() {
     );
 }
 
+/* Salveaza filtrul de nume si notifica restul UI-ului bibliotecii. */
 function pushNameFilter(nameFilter: string) {
     const s = patchLibraryUi({ nameFilter });
     emitLibraryFiltersChange({ nameFilter, sortKey: s.sortKey, sortDir: s.sortDir });
@@ -38,6 +40,7 @@ export function LibrarySearchByFlyout({ className = "" }: { className?: string }
         syncFromStorage();
     }, [syncFromStorage]);
 
+    /* Asculta schimbari de filtre din alte componente. */
     useEffect(() => {
         const onFilters = (e: Event) => {
             const d = (e as CustomEvent<LibraryFiltersDetail>).detail;
@@ -52,6 +55,7 @@ export function LibrarySearchByFlyout({ className = "" }: { className?: string }
         syncFromStorage();
     }, [open, syncFromStorage]);
 
+    /* Inchide flyout-ul la click in afara sau Escape. */
     useEffect(() => {
         if (!open) return;
         const onDoc = (e: MouseEvent) => {

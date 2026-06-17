@@ -19,6 +19,7 @@ La final lipim MP3-urile cu ffmpeg concat (nu incarca tot PCM-ul cartii in RAM).
 mai mult la verificarea duratei pe fisier si la planul B daca ffmpeg lipseste.
 """
 
+# --- Importuri ---
 from __future__ import annotations
 
 import json
@@ -34,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+# --- Constante configurare (citite din variabile de mediu) ---
 GEMINI_CHUNK_CHARS = max(1000, int(os.getenv("GEMINI_CHUNK_CHARS", "4500")))
 GEMINI_WORKERS = max(1, int(os.getenv("GEMINI_WORKERS", "4")))
 # edge = voce neurala prin serviciul Edge; gtts = varianta neoficiala Google (mai sensibila la rate limit).
@@ -64,6 +66,7 @@ TTS_FALLBACK_GTTS = os.getenv("TTS_FALLBACK_GTTS", "true").strip().lower() in (
 )
 
 
+# --- Taiere text in bucati (pentru Gemini si pregatire TTS) ---
 def _find_best_cut(text: str, start: int, end: int) -> int:
     """
     Alege punctul de taiere din (start, end]: prefera sfarsit de propozitie, apoi spatiu.
@@ -135,8 +138,9 @@ def chunk_text(text: str, max_size: int) -> list[str]:
     return [c for c in chunks if c.strip()]
 
 
+# --- Estimari caractere si segmente (credite, limite) ---
 def count_chars_for_generation(text: str) -> int:
-    """Numar de caractere dupa sanitize — folosit la credite si limite."""
+    """Numar de caractere dupa sanitize; folosit la credite si limite."""
     return len(sanitize_text_pentru_tts((text or "").strip()))
 
 
@@ -147,20 +151,34 @@ def estimate_tts_segment_count(text: str) -> int:
     return len(chunk_text_for_tts(t, TTS_MAX_CHARS))
 
 
-def prepare_text_for_audio(text: str, gemini_model=None, *, use_gemini: bool = True) -> str:
+# --- Pregatire text pentru redare (sanitize + curatare Gemini optionala) ---
+def prepare_text_for_audio(
+    text: str,
+    gemini_model=None,
+    *,
+    use_gemini: bool = True,
+    check_cancel: Callable[[], None] | None = None,
+) -> str:
     """
     Sanitize + optional curatare Gemini (aceeasi logica ca la extragere URL).
     Daca nu exista model Gemini, returneaza doar textul sanitizat.
     """
+    if check_cancel is not None:
+        check_cancel()
     text = sanitize_text_pentru_tts((text or "").strip())
     if not text:
         return ""
     if use_gemini and gemini_model is not None:
-        cleaned = curata_text_cu_gemini(gemini_model, text)
+        if check_cancel is not None:
+            check_cancel()
+        cleaned = curata_text_cu_gemini(gemini_model, text, check_cancel=check_cancel)
+        if check_cancel is not None:
+            check_cancel()
         return cleaned if cleaned else text
     return text
 
 
+# --- Curatare text cu Gemini (paralel pe bucati mari) ---
 def _prompt_curata_fragment(index: int, total: int, fragment: str) -> str:
     return f"""Ești editor pentru cărți audio. Acesta este fragmentul {index} din {total} ale unui text extras de pe web.
 Extrage DOAR narativul / conținutul de citit; elimină meniuri, reclame, numere de pagină, boilerplate de site.
@@ -181,24 +199,33 @@ def _gemini_safe_text(raspuns) -> str:
         return ""
 
 
-def curata_text_cu_gemini(model, text_brut: str) -> str:
+def curata_text_cu_gemini(model, text_brut: str, check_cancel: Callable[[], None] | None = None) -> str:
     """
     Fiecare chunk primeste acelasi tip de instructiuni (scoate reclame, meniuri etc.).
     Daca avem un singur chunk, un singur apel; altfel ThreadPoolExecutor cu plafon GEMINI_WORKERS.
     La esec pe un fragment pastram textul brut al bucatii ca sa nu pierdem cartea intreaga.
     """
+    if check_cancel is not None:
+        check_cancel()
     text_brut = (text_brut or "").strip()
     if not text_brut:
         return ""
 
     chunks = chunk_text(text_brut, GEMINI_CHUNK_CHARS)
     if len(chunks) == 1:
+        if check_cancel is not None:
+            check_cancel()
         prompt = _prompt_curata_fragment(1, 1, chunks[0])
         r = model.generate_content(prompt)
         out = _gemini_safe_text(r)
+        if check_cancel is not None:
+            check_cancel()
         return out if out else chunks[0]
 
+    # Mai multe chunk-uri: curatare paralela cu plafon GEMINI_WORKERS.
     def one(idx: int, frag: str) -> tuple[int, str]:
+        if check_cancel is not None:
+            check_cancel()
         p = _prompt_curata_fragment(idx + 1, len(chunks), frag)
         try:
             r = model.generate_content(p)
@@ -211,12 +238,15 @@ def curata_text_cu_gemini(model, text_brut: str) -> str:
     with ThreadPoolExecutor(max_workers=min(GEMINI_WORKERS, len(chunks))) as ex:
         futs = [ex.submit(one, i, c) for i, c in enumerate(chunks)]
         for f in as_completed(futs):
+            if check_cancel is not None:
+                check_cancel()
             i, s = f.result()
             results[i] = s
 
     return "\n\n".join(s for s in results if s)
 
 
+# --- Sanitizare text si fragmentare pentru motorul TTS ---
 def sanitize_text_pentru_tts(text: str) -> str:
     """Inlatura caractere de control (in afara de newline/tab) si NUL ca motorul TTS sa nu crape."""
     text = text.replace("\x00", " ")
@@ -269,6 +299,7 @@ def _chunk_hard_for_gtts(text: str, max_size: int) -> list[str]:
     return [text[i : i + max_size] for i in range(0, len(text), max_size)]
 
 
+# --- Validare fisier MP3 si citire durata (ffprobe / pydub) ---
 def _este_fisier_mp3_valid(path: str) -> bool:
     if not os.path.isfile(path) or os.path.getsize(path) < MIN_MP3_PART_BYTES:
         return False
@@ -307,6 +338,7 @@ def _durata_mp3_ms(path: str) -> int:
     )
 
 
+# --- Motor TTS: gTTS (cu protectie rate limit si sub-fragmente) ---
 def _gtts_e_rate_limit(err: BaseException) -> bool:
     try:
         from gtts import gTTSError
@@ -421,6 +453,7 @@ def _salveaza_fragment_gtts(chunk: str, path: str) -> None:
             pass
 
 
+# --- Motor TTS: Edge (async rulat intr-un fir separat) ---
 def _run_coroutine_in_fresh_loop(coro) -> None:
     """
     edge-tts e async; in context FastAPI avem deja un loop pe firul principal, deci nu putem asyncio.run().
@@ -443,7 +476,21 @@ def _run_coroutine_in_fresh_loop(coro) -> None:
         pool.submit(_worker).result(timeout=max(900, EDGE_TTS_RECEIVE_TIMEOUT + 180))
 
 
-def _salveaza_fragment_edge(chunk: str, path: str) -> None:
+def _tts_config_from_env():
+    """Config TTS din variabile de mediu (fallback cand UI nu trimite voce)."""
+    try:
+        from tts_voices import DEFAULT_EDGE_VOICE, TtsConfig
+    except ModuleNotFoundError:
+        from backend.tts_voices import DEFAULT_EDGE_VOICE, TtsConfig
+    engine = TTS_ENGINE if TTS_ENGINE in ("edge", "gtts", "") else "edge"
+    return TtsConfig(
+        engine=engine or "edge",
+        edge_voice=EDGE_TTS_VOICE or DEFAULT_EDGE_VOICE,
+        allow_fallback=TTS_FALLBACK_GTTS,
+    )
+
+
+def _salveaza_fragment_edge(chunk: str, path: str, *, voice: str | None = None) -> None:
     """Sintetizare prin serviciul Edge: de regula mai putine surprize decat gTTS pe texte lungi."""
     import edge_tts
     from edge_tts.exceptions import NoAudioReceived
@@ -452,7 +499,11 @@ def _salveaza_fragment_edge(chunk: str, path: str) -> None:
     if not chunk:
         raise ValueError("Fragment TTS gol.")
 
-    voice = EDGE_TTS_VOICE or "ro-RO-AlinaNeural"
+    try:
+        from tts_voices import DEFAULT_EDGE_VOICE
+    except ModuleNotFoundError:
+        from backend.tts_voices import DEFAULT_EDGE_VOICE
+    voice = (voice or EDGE_TTS_VOICE or DEFAULT_EDGE_VOICE).strip()
     last_err: Exception | None = None
 
     for attempt in range(GTTS_RETRIES):
@@ -491,22 +542,47 @@ def _salveaza_fragment_edge(chunk: str, path: str) -> None:
     ) from last_err
 
 
-def _salveaza_fragment(chunk: str, path: str) -> None:
-    """Dispatcheaza catre Edge sau gTTS; la Edge + fallback activ, incearca gTTS daca prima incercare pica."""
-    if TTS_ENGINE == "gtts":
+# --- Dispatcher TTS: Edge sau gTTS, cu fallback optional ---
+def _salveaza_fragment(chunk: str, path: str, *, tts=None) -> None:
+    """Dispatcheaza catre Edge sau gTTS; fallback gTTS doar daca allow_fallback e True in config."""
+    cfg = tts or _tts_config_from_env()
+    if cfg.engine == "gtts":
         _salveaza_fragment_gtts(chunk, path)
         return
-    if TTS_ENGINE not in ("edge", ""):
-        raise RuntimeError(f"TTS_ENGINE necunoscut: {TTS_ENGINE!r}. Folosește 'edge' sau 'gtts'.")
+    if cfg.engine not in ("edge", ""):
+        raise RuntimeError(f"TTS_ENGINE necunoscut: {cfg.engine!r}. Folosește 'edge' sau 'gtts'.")
     try:
-        _salveaza_fragment_edge(chunk, path)
+        _salveaza_fragment_edge(chunk, path, voice=cfg.edge_voice)
     except Exception as e:
-        if not TTS_FALLBACK_GTTS:
+        if not cfg.allow_fallback:
             raise
-        print(f"[TTS] Edge a eșuat pentru un fragment, folosesc gTTS: {e}")
+        print(f"[TTS] Edge a esuat pentru un fragment, folosesc gTTS: {e}")
         _salveaza_fragment_gtts(chunk, path)
 
 
+def synthesize_preview_bytes(text: str, tts_config) -> bytes:
+    """Generez un MP3 scurt in memorie (previzualizare voce in UI)."""
+    text = sanitize_text_pentru_tts((text or "").strip())
+    if not text:
+        raise ValueError("Text gol pentru previzualizare TTS.")
+    fd, path = tempfile.mkstemp(suffix=".mp3", prefix="tts_preview_")
+    os.close(fd)
+    try:
+        _salveaza_fragment(text, path, tts=tts_config)
+        with open(path, "rb") as f:
+            blob = f.read()
+        if len(blob) < 256:
+            raise RuntimeError("Previzualizarea audio a esuat (fisier prea mic).")
+        return blob
+    finally:
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            pass
+
+
+# --- Rezultat TTS per segment (pentru playlist live) ---
 @dataclass
 class TtsSegmentResult:
     index: int
@@ -515,14 +591,19 @@ class TtsSegmentResult:
     mp3_path: str
 
 
+# --- Sinteza vocala: segmente individuale si MP3 final concatenat ---
 def synthesize_ro_with_segments(
     text: str,
     on_segment_complete: Callable[[TtsSegmentResult], None] | None = None,
+    tts_config=None,
+    check_cancel: Callable[[], None] | None = None,
 ) -> tuple[str, list[TtsSegmentResult]]:
     """
     Genereaza MP3 final + lista de segmente (text + fisier temporar per bucata).
     on_segment_complete e apelat dupa fiecare segment TTS, inainte de concatenare.
     """
+    if check_cancel is not None:
+        check_cancel()
     text = sanitize_text_pentru_tts((text or "").strip())
     if not text:
         raise ValueError("Text gol pentru TTS.")
@@ -531,6 +612,8 @@ def synthesize_ro_with_segments(
     if not parts:
         raise ValueError("Nu s-au putut împărți fragmente pentru TTS.")
 
+    cfg = tts_config or _tts_config_from_env()
+
     tmpdir = tempfile.mkdtemp(prefix="tts_parts_")
     part_paths: list[str] = []
     segments: list[TtsSegmentResult] = []
@@ -538,8 +621,10 @@ def synthesize_ro_with_segments(
 
     def genereaza_toate_secvential() -> None:
         for i, chunk in enumerate(parts):
+            if check_cancel is not None:
+                check_cancel()
             p = os.path.join(tmpdir, f"p{i}.mp3")
-            _salveaza_fragment(chunk, p)
+            _salveaza_fragment(chunk, p, tts=cfg)
             part_paths.append(p)
             seg = TtsSegmentResult(index=i, total=total, text=chunk, mp3_path=p)
             segments.append(seg)
@@ -549,14 +634,19 @@ def synthesize_ro_with_segments(
                 time.sleep(TTS_DELAY_SEC)
 
     def genereaza_paralel_limitat() -> None:
+        if check_cancel is not None:
+            check_cancel()
+
         def synth(ic: tuple[int, str]) -> tuple[int, str]:
             i, chunk = ic
             p = os.path.join(tmpdir, f"p{i}.mp3")
-            _salveaza_fragment_gtts(chunk, p)
+            _salveaza_fragment(chunk, p, tts=cfg)
             return i, p
 
         with ThreadPoolExecutor(max_workers=min(GTTS_WORKERS, len(parts))) as ex:
             ordered = list(ex.map(synth, enumerate(parts)))
+        if check_cancel is not None:
+            check_cancel()
         ordered.sort(key=lambda x: x[0])
         for i, chunk in enumerate(parts):
             p = next(pth for idx, pth in ordered if idx == i)
@@ -567,11 +657,16 @@ def synthesize_ro_with_segments(
                 on_segment_complete(seg)
 
     try:
-        if TTS_ENGINE == "gtts" and GTTS_WORKERS > 1:
+        # gTTS: paralel limitat daca GTTS_WORKERS > 1; altfel secvential (Edge sau gTTS).
+        if cfg.engine == "gtts" and GTTS_WORKERS > 1:
             genereaza_paralel_limitat()
         else:
             genereaza_toate_secvential()
 
+        if check_cancel is not None:
+            check_cancel()
+
+        # Un singur segment: copiez direct; altfel concatenez cu ffmpeg sau pydub.
         if len(parts) == 1:
             single = part_paths[0]
             out_path = os.path.join(tempfile.gettempdir(), f"tts_{int(time.time() * 1000)}.mp3")
@@ -598,15 +693,16 @@ def synthesize_ro_with_segments(
             pass
 
 
-def synthesize_ro_to_mp3_path(text: str) -> str:
+def synthesize_ro_to_mp3_path(text: str, tts_config=None) -> str:
     """
     Intoarce calea catre un fisier temporar .mp3. Intern: sanitize, taiere la TTS_MAX_CHARS,
     sintetizare per fragment (cu pauza TTS_DELAY_SEC), lipire cu ffmpeg sau pydub.
     """
-    out_path, _segments = synthesize_ro_with_segments(text)
+    out_path, _segments = synthesize_ro_with_segments(text, tts_config=tts_config)
     return out_path
 
 
+# --- Concatenare MP3 (ffmpeg demuxer sau pydub ca plan B) ---
 def _ffprobe_duration_sec(path: str) -> float | None:
     """Citeste duration din ffprobe -show_entries format=duration; None daca unealta lipseste."""
     exe = shutil.which("ffprobe")

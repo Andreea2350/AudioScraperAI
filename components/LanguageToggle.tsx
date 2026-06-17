@@ -1,15 +1,17 @@
 "use client";
 
+/* Comutator limba RO/EN, cu varianta vizuala pentru header-ul verde al landing-ului. */
 import { useI18n, type Locale } from "@/lib/i18n";
 
 type Props = {
-    /** Acelasi principiu ca la ThemeToggle: varianta pentru header-ul verde al landing-ului. */
+    /* Acelasi principiu ca la ThemeToggle: varianta pentru header-ul verde al landing-ului. */
     onBrandBar?: boolean;
 };
 
 export function LanguageToggle({ onBrandBar }: Props) {
     const { locale, setLocale, t } = useI18n();
 
+    /* Randeaza un buton-pastila pentru o limba; stil activ/inactiv. */
     const pill = (l: Locale, label: string) => {
         const active = locale === l;
         return (

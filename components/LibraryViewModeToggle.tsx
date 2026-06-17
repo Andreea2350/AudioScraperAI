@@ -1,5 +1,6 @@
 "use client";
 
+/* Comutator vizualizare biblioteca: grila sau lista. */
 import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -24,17 +25,20 @@ function ListIcon() {
     );
 }
 
-/**
- * Buton in header: icon reflecta modul curent; la hover, title indica modul la care treci (EN).
+/*
+ * Buton in header: icon reflecta modul curent;
+ * la hover, tooltip-ul indica modul la care treci.
  */
 export function LibraryViewModeToggle({ className = "" }: { className?: string }) {
     const { t } = useI18n();
     const [viewMode, setViewMode] = useState<LibraryViewMode>("grid");
 
+    /* Citeste modul salvat la montare. */
     useEffect(() => {
         setViewMode(loadLibraryUi().viewMode);
     }, []);
 
+    /* Asculta schimbari de mod din alte parti ale aplicatiei. */
     useEffect(() => {
         const onChange = (e: Event) => {
             const ce = e as CustomEvent<{ mode: LibraryViewMode }>;
@@ -46,6 +50,7 @@ export function LibraryViewModeToggle({ className = "" }: { className?: string }
         return () => window.removeEventListener("audiobooks-library-view-mode", onChange);
     }, []);
 
+    /* Comuta intre grid si list si persista preferinta. */
     const toggle = useCallback(() => {
         const next: LibraryViewMode = viewMode === "grid" ? "list" : "grid";
         setPersistedLibraryViewMode(next);

@@ -16,12 +16,13 @@ export type LibraryPersisted = {
     viewMode: LibraryViewMode;
     sortKey: LibrarySortKey;
     sortDir: LibrarySortDir;
-    /** Filtru cautare titlu in biblioteca (doar client). */
+    /** Filtru cautare titlu in biblioteca (doar client) */
     nameFilter: string;
 };
 
 const STORAGE_PREFIX = "audiobooks-library-ui:";
 
+/** Construiesc cheia localStorage pe baza emailului sau rolului guest. */
 export function libraryStorageUserKey(): string {
     if (typeof window === "undefined") return "default";
     const email = (localStorage.getItem("email") || "").trim().toLowerCase();
@@ -42,6 +43,7 @@ const defaultState: LibraryPersisted = {
     nameFilter: "",
 };
 
+/** Citesc starea UI a bibliotecii din localStorage. */
 export function loadLibraryUi(): LibraryPersisted {
     if (typeof window === "undefined") return { ...defaultState };
     try {
@@ -64,16 +66,17 @@ export function loadLibraryUi(): LibraryPersisted {
     }
 }
 
+/** Salvez starea UI a bibliotecii in localStorage. */
 export function saveLibraryUi(state: LibraryPersisted): void {
     if (typeof window === "undefined") return;
     try {
         localStorage.setItem(key(), JSON.stringify(state));
     } catch {
-        /* ignore */
+        /* ignor */
     }
 }
 
-/** Actualizeaza campuri fara a pierde restul starii din localStorage. */
+/** Actualizez campuri fara a pierde restul starii din localStorage. */
 export function patchLibraryUi(patch: Partial<LibraryPersisted>): LibraryPersisted {
     const s = loadLibraryUi();
     const next = { ...s, ...patch };
@@ -89,6 +92,7 @@ export type LibraryFiltersDetail = {
     sortDir: LibrarySortDir;
 };
 
+/** Notific pagina principala ca s-au schimbat filtrele de sortare/cautare. */
 export function emitLibraryFiltersChange(detail: LibraryFiltersDetail): void {
     if (typeof window === "undefined") return;
     window.dispatchEvent(new CustomEvent(LIBRARY_FILTERS_CHANGE_EVENT, { detail }));
@@ -96,11 +100,13 @@ export function emitLibraryFiltersChange(detail: LibraryFiltersDetail): void {
 
 export const LIBRARY_FOLDERS_CHANGED_EVENT = "audiobooks-library-folders-changed" as const;
 
+/** Notific ca s-a creat/sters un dosar in biblioteca. */
 export function emitLibraryFoldersChanged(): void {
     if (typeof window === "undefined") return;
     window.dispatchEvent(new Event(LIBRARY_FOLDERS_CHANGED_EVENT));
 }
 
+/** Parsez valoarea din select-ul de sortare (ex. "data-desc"). */
 export function parseSortPresetValue(v: string): { sortKey: LibrarySortKey; sortDir: LibrarySortDir } {
     const parts = v.split("-");
     const k = parts[0];
@@ -115,7 +121,7 @@ export function formatSortPreset(sortKey: LibrarySortKey, sortDir: LibrarySortDi
     return `${sortKey}-${sortDir}`;
 }
 
-/** Schimba doar modul de afisare; notifica shell-ul si pagina principala. */
+/** Schimb modul grid/list si notific shell-ul si pagina principala. */
 export function setPersistedLibraryViewMode(mode: LibraryViewMode): void {
     if (typeof window === "undefined") return;
     const s = loadLibraryUi();
@@ -140,6 +146,7 @@ export function setBookFolderId(
     return next;
 }
 
+/** Scot asignarile cartilor dintr-un dosar sters. */
 export function removeBookAssignmentsForFolder(
     map: Record<string, string | null>,
     folderId: string,

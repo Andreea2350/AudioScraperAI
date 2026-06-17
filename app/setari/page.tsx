@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Setari cont: tema, limba (localStorage + eveniment global), drepturi explicate pe rol, link catre catalog public.
+ * Setari cont: tema, limba (localStorage + eveniment global), drepturi explicate pe rol.
  */
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -12,6 +12,7 @@ import { applyTheme, readDomTheme } from "@/lib/theme";
 
 type RolUtilizator = "admin" | "user" | "guest" | null;
 
+/** Card reutilizabil pentru sectiuni setari (titlu + continut). */
 function Card({
     titlu,
     copii,
@@ -36,6 +37,7 @@ function Card({
     );
 }
 
+/** Lista cu buline pentru drepturile rolului curent. */
 function ListaDrepturi({ elemente }: { elemente: string[] }) {
     return (
         <ul className="list-inside list-disc space-y-2 text-sm" style={{ color: "var(--text-body)" }}>
@@ -48,16 +50,20 @@ function ListaDrepturi({ elemente }: { elemente: string[] }) {
 
 export default function PaginaSetari() {
     const { locale, t } = useI18n();
+
+    /* --- Stare: profil utilizator si tema --- */
     const [rol, setRol] = useState<RolUtilizator>(null);
     const [email, setEmail] = useState<string>("");
     const [tema, setTema] = useState<"light" | "dark">("light");
 
+    /** Citeste rol, email si tema curenta din localStorage / DOM la mount. */
     useEffect(() => {
         setRol((typeof window !== "undefined" ? localStorage.getItem("rol") : null) as RolUtilizator);
         setEmail(typeof window !== "undefined" ? localStorage.getItem("email") || "" : "");
         setTema(readDomTheme());
     }, []);
 
+    /** Aplica tema light/dark si persista in localStorage. */
     const seteazaTema = (mode: "light" | "dark") => {
         applyTheme(mode);
         setTema(mode);
@@ -73,6 +79,7 @@ export default function PaginaSetari() {
 
     return (
         <div className="mx-auto max-w-2xl px-4 py-8 lg:px-8 lg:py-10" style={{ animation: "fade-in 0.3s ease-out" }}>
+            {/* Link inapoi la biblioteca */}
             <Link
                 href="/"
                 className="mb-6 inline-flex text-xs font-extrabold uppercase tracking-widest transition-colors"
@@ -88,6 +95,7 @@ export default function PaginaSetari() {
                 {esteAdmin ? t("settings.subtitleAdmin") : t("settings.subtitleUser")}
             </p>
 
+            {/* Carduri setari: cont, limba, aspect, drepturi */}
             <div className="mt-8 space-y-6">
                 <Card
                     titlu={t("settings.cardAccount")}
@@ -192,29 +200,6 @@ export default function PaginaSetari() {
                         copii={
                             <>
                                 <ListaDrepturi elemente={drepturiAdmin} />
-                                <div
-                                    className="mt-5 rounded-xl p-4 text-sm"
-                                    style={{
-                                        background: "var(--card-bg-muted)",
-                                        border: "1px solid var(--border-card)",
-                                        color: "var(--text-body)",
-                                    }}
-                                >
-                                    <p className="font-bold" style={{ color: "var(--heading-on-surface)" }}>
-                                        {t("settings.publicCatalog")}
-                                    </p>
-                                    <p className="mt-1">{t("settings.publicCatalogBody")}</p>
-                                    <Link
-                                        href="/intro#biblioteca-publica"
-                                        className="mt-3 inline-flex rounded-xl px-4 py-2 text-sm font-extrabold text-white transition-opacity hover:opacity-95"
-                                        style={{
-                                            background: "linear-gradient(135deg, #408A71, #285A48)",
-                                            boxShadow: "var(--shadow-btn-sm)",
-                                        }}
-                                    >
-                                        {t("settings.openCatalog")}
-                                    </Link>
-                                </div>
                                 <p className="mt-4 text-xs leading-relaxed" style={{ color: "var(--text-faint)" }}>
                                     {t("settings.adminRegNote")}
                                 </p>

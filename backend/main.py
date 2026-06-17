@@ -3,17 +3,20 @@ Backend AudioScraperAI: scoate text din pagini web sau din fisiere (PDF, EPUB, D
 face sinteza vocala (TTS), salveaza in Supabase si emite JWT in functie de rol.
 
 La fiecare carte tinem minte cine a creat-o (created_by_email) si daca e vizibila in
-catalogul public (is_public), ca sa separem biblioteca personala de ce apare pe landing.
+catalogul personal al fiecarui utilizator.
 
 Textele foarte lungi nu trec dintr-o data prin Gemini: modulul long_text_pipeline le sparge,
 le curata bucata cu bucata, apoi le citeste la fel cu TTS si le lipeste intr-un singur MP3.
 """
+
+# --- Importuri standard si biblioteci externe ---
+import asyncio
 import io
 import sys
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 import requests
 from bs4 import BeautifulSoup
@@ -29,59 +32,93 @@ import bcrypt as bcrypt_lib
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
 
+# --- Importuri module locale (backend direct vs pachet Vercel) ---
 try:
     # Ruleaza din folderul backend (ex. `python __main__.py`).
     from long_text_pipeline import (
         MIN_FINAL_MP3_BYTES,
         TtsSegmentResult,
-        count_chars_for_generation,
         curata_text_cu_gemini,
-        estimate_tts_segment_count,
-        prepare_text_for_audio,
         synthesize_ro_to_mp3_path,
-        synthesize_ro_with_segments,
     )
     from guest_credits import (
         GUEST_CREDITS_PER_JOB,
-        GUEST_PREVIEW_CHARS,
         assert_guest_can_generate,
         deduct_guest_credits,
         ensure_guest_session,
         guest_credits_snapshot,
         guest_session_id_din_jwt,
-        guest_tables_available,
         normalize_guest_session_id,
         probe_guest_tables,
     )
     from generation_stream import run_audio_generation
+    from generation_cancel import (
+        GenerationCancelled,
+        GenerationJob,
+        cancel_generation_job,
+        create_generation_job,
+        release_generation_job,
+    )
+    from tts_voices import (
+        preview_locale_for_voice,
+        resolve_voice_id,
+        sample_text_for_voice,
+        tts_config_from_voice_id,
+        voice_catalog_for_api,
+    )
+    from long_text_pipeline import synthesize_preview_bytes
+    from text_extraction import (
+        build_extract_meta,
+        decode_plain_text_bytes,
+        extract_pdf_text,
+        normalize_extracted_document_text,
+        repair_legacy_romanian_diacritics,
+    )
 except ModuleNotFoundError:
     # Import de pachet (ex. Vercel: `from backend.main import app`).
     from backend.long_text_pipeline import (
         MIN_FINAL_MP3_BYTES,
         TtsSegmentResult,
-        count_chars_for_generation,
         curata_text_cu_gemini,
-        estimate_tts_segment_count,
-        prepare_text_for_audio,
         synthesize_ro_to_mp3_path,
-        synthesize_ro_with_segments,
     )
     from backend.guest_credits import (
         GUEST_CREDITS_PER_JOB,
-        GUEST_PREVIEW_CHARS,
         assert_guest_can_generate,
         deduct_guest_credits,
         ensure_guest_session,
         guest_credits_snapshot,
         guest_session_id_din_jwt,
-        guest_tables_available,
         normalize_guest_session_id,
         probe_guest_tables,
     )
     from backend.generation_stream import run_audio_generation
+    from backend.generation_cancel import (
+        GenerationCancelled,
+        GenerationJob,
+        cancel_generation_job,
+        create_generation_job,
+        release_generation_job,
+    )
+    from backend.tts_voices import (
+        preview_locale_for_voice,
+        resolve_voice_id,
+        sample_text_for_voice,
+        tts_config_from_voice_id,
+        voice_catalog_for_api,
+    )
+    from backend.long_text_pipeline import synthesize_preview_bytes
+    from backend.text_extraction import (
+        build_extract_meta,
+        decode_plain_text_bytes,
+        extract_pdf_text,
+        normalize_extracted_document_text,
+        repair_legacy_romanian_diacritics,
+    )
 
 
-# Citeste variabile din fisierul .env (chei API, URL Supabase, secret JWT etc.).
+# --- Mediu: .env, consola UTF-8, configurare Gemini ---
+# Citesc variabile din fisierul .env (chei API, URL Supabase, secret JWT etc.).
 load_dotenv()
 
 # Pe Windows consola foloseste des cp1252; fortam UTF-8 pe stdout/stderr ca sa nu pice
@@ -99,7 +136,8 @@ if _gemini_key:
     genai.configure(api_key=_gemini_key)
 model = genai.GenerativeModel("gemini-2.5-flash") if _gemini_key else None
 
-# Client Supabase creat la prima folosire
+# --- Client Supabase (lazy) si detectie coloane schema ---
+# Clientul Supabase se creeaza la prima folosire, nu la import.
 _supabase_client: Client | None = None
 _carti_has_user_id: bool | None = None
 _carti_has_guest_session: bool | None = None
@@ -155,6 +193,7 @@ def has_carti_guest_session_column() -> bool:
     return _carti_has_guest_session
 
 
+# --- Proprietate carte: filtru biblioteca si verificari drepturi ---
 def _apply_owner_scope(q, user: dict):
     """Filtru biblioteca: admin vede tot; user pe user_id; guest pe guest_session_id."""
     rol = user.get("rol")
@@ -176,13 +215,14 @@ def _apply_owner_scope(q, user: dict):
         return q.eq("created_by_email", owner)
     return q
 
-# ── Auth config ──────────────────────────────────────────────────────────────
+# --- Auth config ---
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-schimba-in-productie")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_ORE = 24
 
 app = FastAPI(title="Motor AI Audiobooks", version="1.0")
 
+# --- CORS: frontend Next.js pe alt port decat API-ul ---
 # Origini implicite (dev) + optional CORS_EXTRA_ORIGINS (ex. domeniu productie sau apel direct la API).
 _cors_default = [
     "http://localhost:3000",
@@ -197,7 +237,7 @@ _cors_origins = list(_cors_default)
 if _cors_extra:
     _cors_origins.extend(p.strip() for p in _cors_extra.split(",") if p.strip())
 
-# Browserul (Next.js) ruleaza pe alt port decat API-ul; CORS permite apeluri cu cookie/credentiale.
+# Inregistrez middleware CORS: permite apeluri cu credentiale de la originile de mai sus.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -207,7 +247,7 @@ app.add_middleware(
 )
 
 
-# ── JWT si verificari de drepturi (folosite cu Depends pe rutele protejate) ───
+# --- JWT si verificari de drepturi (Depends pe rute protejate) ---
 def decode_token_safe(token: str) -> dict | None:
     """Incearca sa citeasca payload-ul JWT; la semnatura gresita sau expirat returneaza None, fara exceptie."""
     try:
@@ -228,7 +268,7 @@ async def get_current_user_optional(
 async def get_current_user(
     authorization: str | None = Header(None),
 ) -> dict:
-    """Cere neaparat Bearer token valid; altfel 401. Folosit la istoric, publicare, stergere, redenumire."""
+    """Cere neaparat Bearer token valid; altfel 401. Folosit la istoric, stergere, redenumire."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Autentificare necesară.")
     payload = decode_token_safe(authorization[7:].strip())
@@ -264,10 +304,9 @@ def user_id_din_jwt(user: dict | None) -> int | None:
 
 
 def campuri_proprietar_nou(user: dict | None) -> dict:
-    """La insert carte noua: seteaza proprietarul (user_id + email fallback) si lasa cartea nepublicata."""
+    """La insert carte noua: seteaza proprietarul (user_id + email fallback)."""
     base = {
         "created_by_email": proprietar_din_jwt(user),
-        "is_public": False,
     }
     if has_carti_user_id_column():
         base["user_id"] = user_id_din_jwt(user)
@@ -316,31 +355,6 @@ def assert_poate_edita_cartea(user: dict, carte: dict) -> None:
         raise HTTPException(status_code=403, detail="Nu poți edita cartea altui utilizator.")
 
 
-def assert_poate_seta_public(user: dict, carte: dict) -> None:
-    """Oaspetii nu pot bifa public. Userul doar la cartile lui. Admin la orice carte."""
-    rol = user.get("rol")
-    if rol == "guest":
-        raise HTTPException(status_code=403, detail="Oaspeții nu pot publica cărți în catalog.")
-    if rol == "admin":
-        return
-    owner_id = user_id_din_jwt(user)
-    carte_user_id = carte.get("user_id")
-    try:
-        carte_user_id_int = int(carte_user_id) if carte_user_id is not None else None
-    except (TypeError, ValueError):
-        carte_user_id_int = None
-    if owner_id is not None and carte_user_id_int is not None:
-        if carte_user_id_int != owner_id:
-            raise HTTPException(status_code=403, detail="Nu poți modifica vizibilitatea cărții altcuiva.")
-        return
-    owner = proprietar_din_jwt(user)
-    created = _email_proprietar_db(carte.get("created_by_email"))
-    if created is None:
-        raise HTTPException(status_code=403, detail="Doar administratorul poate publica această carte.")
-    if created != owner:
-        raise HTTPException(status_code=403, detail="Nu poți modifica vizibilitatea cărții altcuiva.")
-
-
 async def incarca_cartea_dupa_id(carte_id: int) -> dict:
     """Select pe carti dupa id; daca nu exista randul, HTTP 404 (folosit inainte de patch/delete)."""
     raspuns = get_supabase().table("carti").select("*").eq("id", carte_id).limit(1).execute()
@@ -369,13 +383,15 @@ def sterge_carte_si_fisier(carte_id: int, audio_link: str | None, user: dict | N
     q.execute()
 
 
-# --- Modele Pydantic pentru body JSON pe rute POST/PATCH/PUT ---
+# --- Modele Pydantic (body JSON pe rute POST/PATCH/PUT) ---
 
 
 class CerereExtragere(BaseModel):
     url: str = Field(..., min_length=1, max_length=8000)
     # Daca e True, ignora cache-ul din DB si regenereaza text + audio chiar daca URL-ul exista deja.
     force_regenerate: bool = False
+    # Vocea Edge TTS aleasa in UI (ex. ro-RO-AlinaNeural); fara fallback automat la gTTS.
+    tts_voice: str | None = None
 
     @field_validator("url", mode="before")
     @classmethod
@@ -387,6 +403,7 @@ class TextLiberRequest(BaseModel):
     titlu: str = Field(..., min_length=1, max_length=500)
     text: str = Field(..., min_length=1)
     curata_cu_gemini: bool = False
+    tts_voice: str | None = None
 
     @field_validator("titlu", "text", mode="before")
     @classmethod
@@ -394,8 +411,44 @@ class TextLiberRequest(BaseModel):
         return v.strip() if isinstance(v, str) else v
 
 
+# --- Helpers SSE (Server-Sent Events pentru generare in timp real) ---
 def _sse_payload(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# --- Helpers upload audio, segmente si credite oaspete ---
+def _upload_mp3_bytes_retryable(nume_fisier: str, blob: bytes) -> None:
+    """Incarca MP3 in Supabase; reincearca erori tranzitorii de retea (ex. WinError 10035 pe Windows)."""
+    max_attempts = 5
+    last_err: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            get_supabase().storage.from_("audio-books").upload(
+                nume_fisier,
+                blob,
+                file_options={"content-type": "audio/mpeg"},
+            )
+            return
+        except Exception as e:
+            last_err = e
+            err_s = str(e).lower()
+            retryable = (
+                "10035" in str(e)
+                or "winerror" in err_s
+                or "timeout" in err_s
+                or "timed out" in err_s
+                or "connection" in err_s
+                or "temporarily unavailable" in err_s
+                or "reset by peer" in err_s
+            )
+            if attempt < max_attempts - 1 and retryable:
+                time.sleep(min(2**attempt, 8))
+                continue
+            break
+    raise HTTPException(
+        status_code=503,
+        detail=f"Încărcare audio în Supabase eșuată: {last_err}",
+    ) from last_err
 
 
 def _upload_mp3_bytes(nume_fisier: str, blob: bytes) -> str:
@@ -404,17 +457,7 @@ def _upload_mp3_bytes(nume_fisier: str, blob: bytes) -> str:
             status_code=503,
             detail=f"Fișierul audio generat e prea mic ({len(blob)} B); generarea a eșuat înainte de încărcare.",
         )
-    try:
-        get_supabase().storage.from_("audio-books").upload(
-            nume_fisier,
-            blob,
-            file_options={"content-type": "audio/mpeg"},
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Încărcare audio în Supabase eșuată: {e}",
-        ) from e
+    _upload_mp3_bytes_retryable(nume_fisier, blob)
     return get_supabase().storage.from_("audio-books").get_public_url(nume_fisier)
 
 
@@ -432,6 +475,7 @@ def _salveaza_segmente_db(carte_id: int, segmente: list[dict]) -> None:
     try:
         get_supabase().table("carti_segmente").insert(rows).execute()
     except Exception as e:
+        # Tabel sau coloane lipsa: incerc insert fara chapter_index / chapter_title.
         msg = str(e).lower()
         if "carti_segmente" in msg and ("does not exist" in msg or "42p01" in msg):
             return
@@ -443,18 +487,6 @@ def _salveaza_segmente_db(carte_id: int, segmente: list[dict]) -> None:
             get_supabase().table("carti_segmente").insert(slim).execute()
             return
         raise
-
-
-def _pregateste_text_pentru_audio(raw_text: str, *, curata_cu_gemini: bool) -> str:
-    foloseste_gemini = curata_cu_gemini and model is not None
-    text_curat = prepare_text_for_audio(
-        raw_text,
-        model if foloseste_gemini else None,
-        use_gemini=foloseste_gemini,
-    )
-    if not text_curat:
-        raise HTTPException(status_code=422, detail="Text gol după curățare.")
-    return text_curat
 
 
 def _verifica_credite_guest(user: dict, char_count: int) -> None:
@@ -489,6 +521,7 @@ def _insert_carte_row(user: dict, fields: dict) -> int | None:
     try:
         ins = get_supabase().table("carti").insert(rand).execute()
     except Exception as e:
+        # Schema veche: renunt la coloane optionale (preview guest, playlist) si reincerc.
         msg = str(e).lower()
         if any(k in msg for k in ("is_guest_preview", "playlist_mode", "source_char_total")):
             for k in ("is_guest_preview", "source_char_total", "playlist_mode"):
@@ -499,11 +532,30 @@ def _insert_carte_row(user: dict, fields: dict) -> int | None:
     return ins.data[0]["id"] if ins.data else None
 
 
-def _iter_sse(event_queue: queue.Queue):
+# --- Orchestrare generare audio (text -> TTS -> Supabase) ---
+_SSE_WAIT_SENTINEL = object()
+
+
+def _queue_get_or_sentinel(q: queue.Queue, timeout: float):
+    try:
+        return q.get(timeout=timeout)
+    except queue.Empty:
+        return _SSE_WAIT_SENTINEL
+
+
+async def _async_sse_stream(
+    event_queue: queue.Queue,
+    job: GenerationJob,
+    request: Request,
+):
+    """Emite evenimente SSE; la deconectarea clientului anuleaza job-ul."""
+    loop = asyncio.get_running_loop()
     while True:
-        try:
-            item = event_queue.get(timeout=12)
-        except queue.Empty:
+        if await request.is_disconnected():
+            job.cancel()
+            break
+        item = await loop.run_in_executor(None, _queue_get_or_sentinel, event_queue, 0.25)
+        if item is _SSE_WAIT_SENTINEL:
             yield ": keepalive\n\n"
             continue
         if item is None:
@@ -511,23 +563,28 @@ def _iter_sse(event_queue: queue.Queue):
         yield _sse_payload(item)
 
 
-def _start_sse_worker(worker_fn) -> StreamingResponse:
+def _start_sse_worker(worker_fn, user: dict, request: Request) -> StreamingResponse:
     event_queue: queue.Queue = queue.Queue()
+    job = create_generation_job(user)
+    event_queue.put({"type": "job", "job_id": job.job_id})
 
     def thread_worker() -> None:
         try:
-            event_queue.put({"type": "phase", "phase": "starting"})
-            worker_fn(event_queue)
+            worker_fn(event_queue, job)
+        except GenerationCancelled:
+            job.cleanup_uploads(get_supabase)
+            event_queue.put({"type": "cancelled"})
         except HTTPException as e:
             event_queue.put({"type": "error", "detail": e.detail, "status_code": e.status_code})
         except Exception as e:
             event_queue.put({"type": "error", "detail": str(e), "status_code": 500})
         finally:
             event_queue.put(None)
+            release_generation_job(job.job_id)
 
     threading.Thread(target=thread_worker, daemon=True).start()
     return StreamingResponse(
-        _iter_sse(event_queue),
+        _async_sse_stream(event_queue, job, request),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -541,10 +598,32 @@ def _ruleaza_generare_text(
     curata_cu_gemini: bool = False,
     source_label: str = "Text Adăugat Manual",
     event_queue: queue.Queue | None = None,
+    tts_voice: str | None = None,
+    job: GenerationJob | None = None,
 ) -> dict:
     def emit(evt: dict) -> None:
         if event_queue is not None:
             event_queue.put(evt)
+
+    def check_cancel() -> None:
+        if job is not None:
+            job.check()
+
+    def upload_mp3_tracked(nume: str, blob: bytes) -> str:
+        check_cancel()
+        url = _upload_mp3_bytes(nume, blob)
+        if job is not None:
+            job.track_upload(url)
+        return url
+
+    def upload_segment_tracked(seg: TtsSegmentResult, prefix: str) -> str:
+        check_cancel()
+        url = _incarca_segment_mp3(seg, prefix)
+        if job is not None:
+            job.track_upload(url)
+        return url
+
+    tts_cfg = tts_config_from_voice_id(tts_voice)
 
     return run_audio_generation(
         user=user,
@@ -553,20 +632,53 @@ def _ruleaza_generare_text(
         source_label=source_label,
         curata_cu_gemini=curata_cu_gemini,
         gemini_model=model,
+        tts_config=tts_cfg,
         emit=emit,
-        upload_mp3=_upload_mp3_bytes,
-        upload_segment=_incarca_segment_mp3,
+        upload_mp3=upload_mp3_tracked,
+        upload_segment=upload_segment_tracked,
         insert_carte=lambda fields: _insert_carte_row(user, fields),
         save_segments=_salveaza_segmente_db,
         verify_guest_credits=lambda n: _verifica_credite_guest(user, n),
         deduct_guest=lambda n: _deduce_credite_guest(user, n),
+        check_cancel=check_cancel,
     )
 
+
+# --- Rute API: health check ---
 @app.get("/")
 async def salut_licenta():
     """Raspuns trivial ca sa verifici din browser sau din monitor ca procesul asculta."""
     return {"mesaj": "Salut! Serverul functioneaza.", "status": "Activ"}
 
+
+# --- Catalog voci TTS (Edge + gTTS) + previzualizare scurta pentru UI ---
+_preview_mp3_cache: dict[str, bytes] = {}
+
+
+@app.get("/tts/voices")
+async def lista_voci_tts(locale: str = "ro"):
+    """Lista vocilor disponibile in dropdown (nume, trait, limba, text demo)."""
+    loc = "en" if locale == "en" else "ro"
+    return {"status": "success", "data": voice_catalog_for_api(loc)}
+
+
+@app.get("/tts/preview")
+async def previzualizare_voce(voice: str = "", locale: str = "ro"):
+    """Returnez un MP3 scurt cu vocea aleasa (cache in memorie per voce + limba demo)."""
+    vid = resolve_voice_id(voice)
+    loc = preview_locale_for_voice(vid)
+    cache_key = f"{vid}:{loc}"
+    if cache_key not in _preview_mp3_cache:
+        cfg = tts_config_from_voice_id(vid)
+        text = sample_text_for_voice(vid, loc)
+        try:
+            _preview_mp3_cache[cache_key] = synthesize_preview_bytes(text, cfg)
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+    return Response(content=_preview_mp3_cache[cache_key], media_type="audio/mpeg")
+
+
+# --- Extragere URL legacy (fara SSE; un singur raspuns JSON la final) ---
 @app.post("/extrage")
 async def extrage_text(
     cerere: CerereExtragere,
@@ -587,7 +699,6 @@ async def extrage_text(
                 "status": "Succes (Din Memorie). Daca textul a fost actualizat pe site, bifati 'force_regenerate'.",
                 "id": carte_gasita["id"],
                 "titlu": carte_gasita.get("titlu"),
-                "is_public": bool(carte_gasita.get("is_public")),
                 "lungime_text_curatat_ai": len(carte_gasita["text_curatat"]),
                 "link_ascultare": carte_gasita["audio_link"],
                 "text_final_audio": carte_gasita["text_curatat"],
@@ -613,16 +724,16 @@ async def extrage_text(
 
         titlu_pagina = soup.title.string.strip() if soup.title and soup.title.string else "Articol Web"
 
-        # Scoatem blocuri care nu sunt continut de citit (meniuri, scripturi) ca sa nu umplem contextul AI.
+        # Pas 1: extrag text brut din HTML (fara meniuri, scripturi, footer).
         for element_inutil in soup(["script", "style", "header", "footer", "nav", "aside"]):
             element_inutil.extract()
 
         text_brut = soup.get_text(separator=' ', strip=True)
 
-        # Curatare cu Gemini pe bucati (limita de iesire per apel), apoi un singur lant TTS -> un MP3.
+        # Pas 2: curatare Gemini pe bucati, apoi TTS -> un singur MP3.
         text_curat_ai = curata_text_cu_gemini(model, text_brut)
 
-        # Titlul frumos: doar inceputul textului brut, ca apelul sa fie rapid; fallback la <title> HTML.
+        # Pas 3: titlu extras cu Gemini din inceputul textului; fallback la <title> HTML.
         prompt_titlu = f"""
         Citeste inceputul acestui text si extrage DOAR titlul principal al cartii sau articolului.
         Nu include numele autorului, numele site-ului sau alte texte (precum "Cărți pe care le puteți citi...").
@@ -645,8 +756,10 @@ async def extrage_text(
         # Uneori modelul pune ghilimele in jurul titlului; le scoatem si limitam lungimea pentru DB.
         titlu_ai_curat = titlu_ai_curat.replace('"', '').replace('„', '').replace('”', '')[:300]
 
+        # Pas 4: sinteza vocala, upload Supabase, salvare rand in carti.
         try:
-            temp_mp3 = synthesize_ro_to_mp3_path(text_curat_ai)
+            tts_cfg = tts_config_from_voice_id(cerere.tts_voice)
+            temp_mp3 = synthesize_ro_to_mp3_path(text_curat_ai, tts_config=tts_cfg)
         except RuntimeError as e:
             raise HTTPException(
                 status_code=503,
@@ -665,11 +778,9 @@ async def extrage_text(
                     detail=f"Audio generat prea mic ({len(blob_audio)} B); încărcarea a fost oprită.",
                 )
             try:
-                get_supabase().storage.from_("audio-books").upload(
-                    nume_fisier_cloud,
-                    blob_audio,
-                    file_options={"content-type": "audio/mpeg"},
-                )
+                _upload_mp3_bytes_retryable(nume_fisier_cloud, blob_audio)
+            except HTTPException:
+                raise
             except Exception as e:
                 raise HTTPException(
                     status_code=503,
@@ -701,7 +812,6 @@ async def extrage_text(
             "status": "Succes, cartea a fost generata si salvata in Cloud!",
             "id": id_nou,
             "titlu": titlu_ai_curat,
-            "is_public": False,
             "lungime_text_curatat_ai": len(text_curat_ai),
             "link_audio": link_public,
             "text_final_audio": text_curat_ai,
@@ -712,6 +822,8 @@ async def extrage_text(
     except Exception as eroare:
         return {"status": "Eroare", "detalii": str(eroare)}
 
+
+# --- Generare din text liber (sync si varianta SSE /stream) ---
 @app.post("/genereaza_text")
 async def genereaza_din_text(
     req: TextLiberRequest,
@@ -723,6 +835,7 @@ async def genereaza_din_text(
             req.titlu,
             req.text,
             curata_cu_gemini=req.curata_cu_gemini,
+            tts_voice=req.tts_voice,
         )
     except HTTPException:
         raise
@@ -734,22 +847,26 @@ async def genereaza_din_text(
 @app.post("/genereaza_text/stream")
 async def genereaza_din_text_stream(
     req: TextLiberRequest,
+    request: Request,
     user: dict = Depends(get_current_user),
 ):
     """SSE: emite segmente pe masura ce sunt sintetizate (playlist in timp real)."""
 
-    def work(event_queue: queue.Queue) -> None:
+    def work(event_queue: queue.Queue, job: GenerationJob) -> None:
         _ruleaza_generare_text(
             user,
             req.titlu,
             req.text,
             curata_cu_gemini=req.curata_cu_gemini,
+            tts_voice=req.tts_voice,
             event_queue=event_queue,
+            job=job,
         )
 
-    return _start_sse_worker(work)
+    return _start_sse_worker(work, user, request)
 
 
+# --- Helpers extragere URL (reutilizati de /extrage/stream) ---
 def _extrage_text_brut_din_url(url: str) -> tuple[str, str]:
     """Intoarce (titlu_pagina, text_brut) dintr-un URL."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -786,17 +903,20 @@ def _titlu_din_text_si_pagina(text_brut: str, titlu_pagina: str) -> str:
     return titlu_pagina[:300]
 
 
+# --- Extragere URL cu SSE (playlist live pe masura ce se genereaza) ---
 @app.post("/extrage/stream")
 async def extrage_din_url_stream(
     cerere: CerereExtragere,
+    request: Request,
     user: dict = Depends(get_current_user),
 ):
     """SSE: extrage URL + genereaza audio cu playlist live."""
 
-    def work(event_queue: queue.Queue) -> None:
+    def work(event_queue: queue.Queue, job: GenerationJob) -> None:
         def emit(evt: dict) -> None:
             event_queue.put(evt)
 
+        job.check()
         q = get_supabase().table("carti").select("*").eq("url", cerere.url)
         q = _apply_owner_scope(q, user)
         if not cerere.force_regenerate:
@@ -809,7 +929,6 @@ async def extrage_din_url_stream(
                         "status": "Succes (Din Memorie)",
                         "id": carte.get("id"),
                         "titlu": carte.get("titlu"),
-                        "is_public": bool(carte.get("is_public")),
                         "link_audio": carte.get("audio_link"),
                         "text_final_audio": carte.get("text_curatat"),
                         "from_cache": True,
@@ -823,9 +942,11 @@ async def extrage_din_url_stream(
                 detail="Lipsește GEMINI_API_KEY în .env (necesar pentru curățarea textului cu AI).",
             )
         emit({"type": "phase", "phase": "extracting"})
+        job.check()
         titlu_pagina, text_brut = _extrage_text_brut_din_url(cerere.url)
         if not text_brut.strip():
             raise HTTPException(status_code=422, detail="Nu s-a putut extrage text din URL.")
+        job.check()
         titlu = _titlu_din_text_si_pagina(text_brut, titlu_pagina)
         _ruleaza_generare_text(
             user,
@@ -833,12 +954,35 @@ async def extrage_din_url_stream(
             text_brut,
             curata_cu_gemini=True,
             source_label=cerere.url,
+            tts_voice=cerere.tts_voice,
             event_queue=event_queue,
+            job=job,
         )
 
-    return _start_sse_worker(work)
+    return _start_sse_worker(work, user, request)
 
 
+class CerereCancelGenerare(BaseModel):
+    job_id: str = Field(..., min_length=8, max_length=64)
+
+
+@app.post("/generare/cancel")
+async def anuleaza_generare(
+    body: CerereCancelGenerare,
+    user: dict = Depends(get_current_user),
+):
+    """Anuleaza un job SSE de generare (acelasi utilizator care l-a pornit)."""
+    try:
+        cancelled = cancel_generation_job(body.job_id.strip(), user)
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail="Nu poți anula generarea altui utilizator.",
+        )
+    return {"status": "success", "cancelled": cancelled}
+
+
+# --- Credite trial pentru oaspeti (fara cont) ---
 @app.get("/guest/credits")
 async def get_guest_credits(user: dict = Depends(get_current_user)):
     if user.get("rol") != "guest":
@@ -857,6 +1001,7 @@ async def get_guest_credits(user: dict = Depends(get_current_user)):
     return guest_credits_snapshot(get_supabase, gs)
 
 
+# --- Segmente audio per carte (playlist capitole) ---
 @app.get("/carti/{carte_id}/segmente")
 async def lista_segmente_carte(carte_id: int, user: dict = Depends(get_current_user)):
     carte = await incarca_cartea_dupa_id(carte_id)
@@ -881,6 +1026,7 @@ async def lista_segmente_carte(carte_id: int, user: dict = Depends(get_current_u
         raise
 
 
+# --- Extragere fisier (PDF, EPUB, DOCX, TXT, imagini) si generare SSE ---
 # Limita de marime pentru upload la /extrage_fisier (evita incarcare RAM excesiva).
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
@@ -891,10 +1037,30 @@ def _is_image_upload(name: str, ctype: str) -> bool:
     return n.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")) or c.startswith("image/")
 
 
+def _ocr_pdf_page_png(png_bytes: bytes, page_num: int) -> str:
+    """OCR pe o pagina PDF rasterizata (Gemini vision)."""
+    if model is None:
+        return ""
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(png_bytes))
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        prompt = (
+            f"Extrage tot textul vizibil din pagina {page_num} a acestei carti. "
+            "Pastreaza ordinea naturala de citire. Returneaza doar textul, fara comentarii."
+        )
+        raspuns = model.generate_content([prompt, img])
+        return (raspuns.text or "").strip()
+    except Exception:
+        return ""
+
+
 def _extract_text_from_bytes(
     raw: bytes, name: str, ctype: str, user: dict
-) -> tuple[str, str]:
-    """Extrage (titlu_sugerat, text) din bytes upload."""
+) -> tuple[str, str, dict]:
+    """Extrage (titlu_sugerat, text, meta) din bytes upload."""
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Fișier prea mare (maxim 15 MB).")
     name_l = (name or "document").lower()
@@ -910,19 +1076,15 @@ def _extract_text_from_bytes(
             detail="Formatul .doc vechi nu este suportat. Salvați documentul ca DOCX.",
         )
     text = ""
+    extract_meta: dict = {}
+    # Detectez tipul dupa extensie / content-type si extrag textul brut.
     if name_l.endswith(".txt") or ctype_l == "text/plain":
-        text = raw.decode("utf-8", errors="replace")
+        text = decode_plain_text_bytes(raw)
+        extract_meta = build_extract_meta(text, "txt")
     elif name_l.endswith(".pdf") or ctype_l == "application/pdf":
-        from pypdf import PdfReader
-
-        reader = PdfReader(io.BytesIO(raw))
-        parts: list[str] = []
-        for page in reader.pages:
-            t = page.extract_text() or ""
-            if not (t and str(t).strip()):
-                t = page.extract_text(extraction_mode="layout") or ""
-            parts.append(t)
-        text = "\n".join(parts)
+        ocr_fn = None if user.get("rol") == "guest" else _ocr_pdf_page_png
+        text, pdf_meta = extract_pdf_text(raw, ocr_page=ocr_fn)
+        extract_meta = build_extract_meta(text, "pdf", pdf_meta)
     elif name_l.endswith(".epub") or ctype_l in ("application/epub+zip", "application/x-epub+zip"):
         import ebooklib
         from ebooklib import epub
@@ -946,11 +1108,13 @@ def _extract_text_from_bytes(
                 except Exception:
                     continue
         text = "\n\n".join(html_parts)
+        extract_meta = build_extract_meta(text, "epub")
     elif name_l.endswith(".docx") or "wordprocessingml" in ctype_l:
         from docx import Document
 
         doc = Document(io.BytesIO(raw))
         text = "\n".join(p.text for p in doc.paragraphs)
+        extract_meta = build_extract_meta(text, "docx")
     elif name_l.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")) or ctype_l.startswith("image/"):
         if model is None:
             raise HTTPException(
@@ -968,6 +1132,7 @@ def _extract_text_from_bytes(
         )
         raspuns = model.generate_content([prompt, img])
         text = (raspuns.text or "").strip()
+        extract_meta = build_extract_meta(text, "image")
     else:
         raise HTTPException(
             status_code=400,
@@ -980,14 +1145,23 @@ def _extract_text_from_bytes(
         )
     base_name = name or "Document"
     titlu_sugerat = (base_name.rsplit(".", 1)[0] if "." in base_name else base_name)[:200]
-    return titlu_sugerat, str(text).strip()
+    text = normalize_extracted_document_text(repair_legacy_romanian_diacritics(str(text)))
+    if not extract_meta:
+        extract_meta = build_extract_meta(text, "unknown")
+    else:
+        extract_meta["char_count"] = len(text)
+        preview = text[:400].replace("\n", " ")
+        extract_meta["extract_preview"] = preview + ("…" if len(text) > 400 else "")
+    return titlu_sugerat, text, extract_meta
 
 
 @app.post("/genereaza_fisier/stream")
 async def genereaza_din_fisier_stream(
+    request: Request,
     file: UploadFile = File(...),
     titlu: str = Form(""),
     curata_cu_gemini: bool = Form(False),
+    tts_voice: str = Form(""),
     user: dict = Depends(get_current_user),
 ):
     """SSE: extrage fisier + genereaza audio cu playlist live."""
@@ -996,23 +1170,27 @@ async def genereaza_din_fisier_stream(
     name = file.filename or "document"
     ctype = file.content_type or ""
 
-    def work(event_queue: queue.Queue) -> None:
+    def work(event_queue: queue.Queue, job: GenerationJob) -> None:
         def emit(evt: dict) -> None:
             event_queue.put(evt)
 
         emit({"type": "phase", "phase": "extracting"})
-        titlu_sugerat, text = _extract_text_from_bytes(raw, name, ctype, user)
+        job.check()
+        titlu_sugerat, text, _meta = _extract_text_from_bytes(raw, name, ctype, user)
         titlu_final = (titlu or titlu_sugerat).strip()[:500]
+        job.check()
         _ruleaza_generare_text(
             user,
             titlu_final,
             text,
             curata_cu_gemini=curata_cu_gemini,
             source_label=f"Fișier: {name}",
+            tts_voice=tts_voice.strip() or None,
             event_queue=event_queue,
+            job=job,
         )
 
-    return _start_sse_worker(work)
+    return _start_sse_worker(work, user, request)
 
 
 @app.post("/extrage_fisier")
@@ -1029,11 +1207,12 @@ async def extrage_fisier(
         raw = await file.read()
         name = file.filename or "document"
         ctype = file.content_type or ""
-        titlu_sugerat, text = _extract_text_from_bytes(raw, name, ctype, user)
+        titlu_sugerat, text, extract_meta = _extract_text_from_bytes(raw, name, ctype, user)
         return {
             "status": "success",
             "text": text,
             "titlu_sugerat": titlu_sugerat,
+            "extract_meta": extract_meta,
         }
     except HTTPException:
         raise
@@ -1049,6 +1228,7 @@ async def extrage_fisier(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- Rute biblioteca: istoric personal, editare carte ---
 @app.get("/istoric")
 async def get_istoric(user: dict = Depends(get_current_user)):
     """
@@ -1070,55 +1250,6 @@ async def get_istoric(user: dict = Depends(get_current_user)):
 
 class CerereRedenumire(BaseModel):
     titlu_nou: str
-
-
-class SetarePublicBody(BaseModel):
-    is_public: bool
-
-
-@app.get("/carti/publice")
-async def lista_carti_publice():
-    """Fara login: lista cartilor bifate public, ordonate desc dupa data crearii (pagina de start / intro)."""
-    try:
-        response = (
-            get_supabase()
-            .table("carti")
-            .select("id,titlu,url,audio_link,creat_la,text_curatat")
-            .eq("is_public", True)
-            .order("creat_la", desc=True)
-            .execute()
-        )
-        return {"status": "success", "data": response.data or []}
-    except Exception as e:
-        print(f"Eroare carti publice: {e}")
-        return {"status": "error", "message": str(e)}
-
-
-@app.patch("/carti/{carte_id}/public")
-async def seteaza_public(
-    carte_id: int,
-    body: SetarePublicBody,
-    user: dict = Depends(get_current_user),
-):
-    """PATCH is_public: verifica mai intai assert_poate_seta_public, apoi update pe randul respectiv."""
-    carte = await incarca_cartea_dupa_id(carte_id)
-    assert_poate_seta_public(user, carte)
-    get_supabase().table("carti").update({"is_public": body.is_public}).eq("id", carte_id).execute()
-    return {"status": "success", "is_public": body.is_public}
-
-
-@app.delete("/admin/carti-publice/{carte_id}")
-async def admin_sterge_carte_publica(carte_id: int, user: dict = Depends(get_current_user)):
-    """
-    Moderare: sterge cartea din DB si MP3-ul din storage. Cere rol admin; cartea trebuia sa fie deja publica.
-    """
-    if user.get("rol") != "admin":
-        raise HTTPException(status_code=403, detail="Doar administratorul poate șterge din catalogul public.")
-    carte = await incarca_cartea_dupa_id(carte_id)
-    if not carte.get("is_public"):
-        raise HTTPException(status_code=400, detail="Cartea nu este marcată ca publică.")
-    sterge_carte_si_fisier(carte_id, carte.get("audio_link"), user=user)
-    return {"status": "success", "mesaj": "Cartea a fost ștearsă."}
 
 
 @app.put("/redenumeste/{carte_id}")
@@ -1154,9 +1285,6 @@ async def sterge_carte(carte_id: int, user: dict = Depends(get_current_user)):
 
 
 # --- Parole (bcrypt) si fabricare JWT ---
-
-
-
 def hash_parola(parola: str) -> str:
     return bcrypt_lib.hashpw(parola.encode("utf-8"), bcrypt_lib.gensalt()).decode("utf-8")
 
@@ -1195,6 +1323,7 @@ class CerereVerificareToken(BaseModel):
     token: str
 
 
+# --- Autentificare: login, inregistrare, verificare token ---
 @app.post("/login")
 async def login(cerere: CerereLogin):
     """

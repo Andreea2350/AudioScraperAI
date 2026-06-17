@@ -1,5 +1,6 @@
 """
 Pipeline unificat: curatare text, detectare capitole, TTS pe segmente, evenimente SSE.
+Toate fluxurile de generare (text, URL, fisier) trec prin run_audio_generation.
 """
 from __future__ import annotations
 
@@ -8,6 +9,11 @@ import time
 from typing import Callable
 
 from fastapi import HTTPException
+
+try:
+    from generation_cancel import GenerationCancelled
+except ModuleNotFoundError:
+    from backend.generation_cancel import GenerationCancelled
 
 from chapter_detection import (
     BOOK_MODE_CHAR_THRESHOLD,
@@ -23,13 +29,17 @@ from long_text_pipeline import (
     synthesize_ro_with_segments,
 )
 
+# Tip pentru functia care emite evenimente SSE catre frontend
 EmitFn = Callable[[dict], None]
 
 GUEST_PREVIEW_CHARS = max(1000, int(os.getenv("GUEST_PREVIEW_CHARS", "5000")))
 
 
 def apply_guest_text_window(user: dict, raw_text: str) -> tuple[str, dict]:
-    """Oaspetii: proceseaza doar primele GUEST_PREVIEW_CHARS ca previzualizare."""
+    """
+    Pentru oaspeti: procesez doar primele GUEST_PREVIEW_CHARS ca previzualizare.
+    Tai la granita de propozitie cand e posibil.
+    """
     text = (raw_text or "").strip()
     meta = {
         "is_guest_preview": False,
@@ -57,6 +67,7 @@ def run_audio_generation(
     source_label: str,
     curata_cu_gemini: bool,
     gemini_model,
+    tts_config=None,
     emit: EmitFn,
     upload_mp3: Callable[[str, bytes], str],
     upload_segment: Callable[[TtsSegmentResult, str], str],
@@ -64,10 +75,22 @@ def run_audio_generation(
     save_segments: Callable[[int, list[dict]], None],
     verify_guest_credits: Callable[[int], None],
     deduct_guest: Callable[[int], dict | None],
+    check_cancel: Callable[[], None] | None = None,
 ) -> dict:
+    """
+    Orchestrarea completa: previzualizare guest, curatare, capitole/parti, TTS, upload, salvare DB.
+    Emit evenimente SSE pe parcurs pentru playlist live in browser.
+    """
+
+    def _check() -> None:
+        if check_cancel is not None:
+            check_cancel()
+
+    # --- Pas 1: limitez textul pentru oaspeti si verific credite ---
+    _check()
     raw_trim, guest_meta = apply_guest_text_window(user, raw_text)
     if not raw_trim:
-        raise HTTPException(status_code=422, detail="Text gol după curățare.")
+        raise HTTPException(status_code=422, detail="Text gol dupa curatare.")
 
     if guest_meta["is_guest_preview"]:
         emit(
@@ -80,19 +103,24 @@ def run_audio_generation(
 
     verify_guest_credits(len(raw_trim))
 
+    # --- Pas 2: curatare optionala cu Gemini ---
+    _check()
     if curata_cu_gemini and gemini_model is not None:
         emit({"type": "phase", "phase": "cleaning"})
     text_curat = prepare_text_for_audio(
         raw_trim,
         gemini_model if curata_cu_gemini and gemini_model is not None else None,
         use_gemini=curata_cu_gemini and gemini_model is not None,
+        check_cancel=check_cancel,
     )
+    _check()
     if not text_curat:
-        raise HTTPException(status_code=422, detail="Text gol după curățare.")
+        raise HTTPException(status_code=422, detail="Text gol dupa curatare.")
 
     char_count = len(text_curat)
     verify_guest_credits(char_count)
 
+    # --- Pas 3: aleg mod playlist (parti vs capitole) ---
     mode = playlist_mode_for_length(char_count)
     emit(
         {
@@ -126,6 +154,7 @@ def run_audio_generation(
         )
         units = [(None, None, text_curat)]
 
+    # --- Pas 4: sintetizez TTS pe fiecare unitate (capitol sau text intreg) ---
     prefix = f"carte_{int(time.time())}"
     segmente_upload: list[dict] = []
     segmente_raspuns: list[dict] = []
@@ -133,6 +162,7 @@ def run_audio_generation(
     global_index = 0
 
     for ch_index, ch_title, unit_text in units:
+        _check()
         if mode == "chapters" and ch_title:
             emit(
                 {
@@ -143,9 +173,11 @@ def run_audio_generation(
             )
 
         def make_on_segment(ci: int | None, ct: str | None, start_idx: int) -> Callable[[TtsSegmentResult], None]:
+            """Creez callback apelat dupa fiecare segment TTS: emit SSE + upload in Supabase."""
             counter = {"n": start_idx}
 
             def on_seg(seg: TtsSegmentResult) -> None:
+                _check()
                 idx = counter["n"]
                 counter["n"] += 1
                 preview = seg.text[:120] + ("…" if len(seg.text) > 120 else "")
@@ -158,6 +190,7 @@ def run_audio_generation(
                     "chapter_index": ci,
                     "chapter_title": ct,
                 }
+                # Prima emitere: segment fara audio (UI optimist)
                 emit({"type": "segment", **seg_resp})
                 link = upload_segment(seg, prefix)
                 row = {
@@ -171,6 +204,7 @@ def run_audio_generation(
                 segmente_upload.append(row)
                 seg_resp["audio_link"] = link
                 segmente_raspuns.append(dict(seg_resp))
+                # A doua emitere: acelasi segment cu link audio
                 emit({"type": "segment", **seg_resp})
 
             return on_seg
@@ -179,7 +213,11 @@ def run_audio_generation(
             temp_mp3, _ = synthesize_ro_with_segments(
                 unit_text,
                 on_segment_complete=make_on_segment(ch_index, ch_title, global_index),
+                tts_config=tts_config,
+                check_cancel=check_cancel,
             )
+        except GenerationCancelled:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
         except RuntimeError as e:
@@ -188,6 +226,8 @@ def run_audio_generation(
         part_paths_for_merge.append(temp_mp3)
         global_index = max((s["segment_index"] for s in segmente_upload), default=-1) + 1
 
+    _check()
+    # --- Pas 5: lipesc MP3-urile partilor intr-un fisier final ---
     if len(part_paths_for_merge) == 1:
         final_path = part_paths_for_merge[0]
     else:
@@ -203,6 +243,8 @@ def run_audio_generation(
             except OSError:
                 pass
 
+    # --- Pas 6: upload MP3 final si curat fisiere temporare ---
+    _check()
     try:
         with open(final_path, "rb") as f:
             blob_final = f.read()
@@ -216,6 +258,8 @@ def run_audio_generation(
             except OSError:
                 pass
 
+    # --- Pas 7: salvez cartea si segmentele in Supabase ---
+    _check()
     rand_carti = {
         "titlu": titlu,
         "url": source_label,
@@ -235,7 +279,6 @@ def run_audio_generation(
         "status": "Succes",
         "id": id_nou,
         "titlu": titlu,
-        "is_public": False,
         "link_audio": link_final,
         "text_final_audio": text_curat,
         "char_count": char_count,

@@ -114,7 +114,7 @@ export const GUEST_JOB_MAX_CHARS = 5000;
 async function consumeGenerationSse(
     res: Response,
     onEvent: (evt: GenerationStreamEvent) => void,
-): Promise<void> {
+): Promise<Record<string, unknown> | null> {
     if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         const detail = mesajEroareFastAPI(data, `HTTP ${res.status}`);
@@ -129,6 +129,7 @@ async function consumeGenerationSse(
     const decoder = new TextDecoder();
     let buffer = "";
     let streamError: string | null = null;
+    let donePayload: Record<string, unknown> | null = null;
     for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -148,12 +149,14 @@ async function consumeGenerationSse(
                             : mesajEroareFastAPI({ detail }, "Eroare la generare.");
                 }
                 onEvent(parsed);
+                if (parsed.type === "done") donePayload = parsed;
             } catch {
                 // ignoram
             }
         }
     }
     if (streamError) throw new Error(streamError);
+    return donePayload;
 }
 
 /** Genereaza text cu SSE — segmentele apar pe masura ce sunt gata. */
@@ -161,14 +164,14 @@ export async function streamGenereazaText(
     body: { titlu: string; text: string; curata_cu_gemini?: boolean },
     onEvent: (evt: GenerationStreamEvent) => void,
     signal?: AbortSignal,
-): Promise<void> {
+): Promise<Record<string, unknown> | null> {
     const res = await fetch(`${API_BASE}/genereaza_text/stream`, {
         method: "POST",
         headers: authHeadersJson(),
         body: JSON.stringify({ curata_cu_gemini: false, ...body }),
         signal,
     });
-    await consumeGenerationSse(res, onEvent);
+    return consumeGenerationSse(res, onEvent);
 }
 
 /** URL → extract + generate cu SSE. */
@@ -176,14 +179,14 @@ export async function streamExtrageUrl(
     body: { url: string; force_regenerate?: boolean },
     onEvent: (evt: GenerationStreamEvent) => void,
     signal?: AbortSignal,
-): Promise<void> {
+): Promise<Record<string, unknown> | null> {
     const res = await fetch(`${API_BASE}/extrage/stream`, {
         method: "POST",
         headers: authHeadersJson(),
         body: JSON.stringify(body),
         signal,
     });
-    await consumeGenerationSse(res, onEvent);
+    return consumeGenerationSse(res, onEvent);
 }
 
 /** Fisier → extract + generate cu SSE. */
@@ -192,7 +195,7 @@ export async function streamGenereazaFisier(
     opts: { titlu?: string; curata_cu_gemini?: boolean },
     onEvent: (evt: GenerationStreamEvent) => void,
     signal?: AbortSignal,
-): Promise<void> {
+): Promise<Record<string, unknown> | null> {
     const fd = new FormData();
     fd.append("file", file);
     if (opts.titlu) fd.append("titlu", opts.titlu);
@@ -203,7 +206,7 @@ export async function streamGenereazaFisier(
         body: fd,
         signal,
     });
-    await consumeGenerationSse(res, onEvent);
+    return consumeGenerationSse(res, onEvent);
 }
 
 export type CarteSegment = {

@@ -1,9 +1,11 @@
 "use client";
 
+/* Buton pentru crearea unui dosar nou in biblioteca, cu modal de introducere nume. */
 import { useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { emitLibraryFoldersChanged, loadLibraryUi, patchLibraryUi } from "@/lib/libraryUiStorage";
 
+/* Iconita dosar cu semn plus. */
 function FolderPlusIcon() {
     return (
         <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
@@ -23,6 +25,7 @@ export function LibraryNewFolderButton({ className = "" }: { className?: string 
 
     const tooltip = t("library.newFolderTooltip");
 
+    /* Valideaza numele, salveaza dosarul in storage local si notifica ascultatorii. */
     const create = () => {
         const trimmed = name.trim();
         if (!trimmed) return;
@@ -68,7 +71,9 @@ export function LibraryNewFolderButton({ className = "" }: { className?: string 
             </button>
 
             {open && (
-                <div
+                <>
+                    {/* Overlay modal: click in afara inchide dialogul */}
+                    <div
                     className="fixed inset-0 z-50 flex items-center justify-center p-4"
                     style={{
                         background: "var(--overlay-scrim)",
@@ -154,6 +159,7 @@ export function LibraryNewFolderButton({ className = "" }: { className?: string 
                         </div>
                     </div>
                 </div>
+                </>
             )}
         </>
     );

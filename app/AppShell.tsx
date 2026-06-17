@@ -20,11 +20,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const { t } = useI18n();
     const pathname = usePathname();
     const router = useRouter();
+
+    /** Rute publice fara sidebar/header (intro, login). */
     const isPublicPage =
         pathname === "/intro" ||
         pathname === "/login" ||
         (pathname?.startsWith("/intro/") ?? false);
 
+    /* --- Stare: navigare, upload, cont utilizator --- */
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [maiMulteOpen, setMaiMulteOpen] = useState(false);
     const [activeMenu, setActiveMenu] = useState("biblioteca");
@@ -36,13 +39,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const imageFileRef = useRef<HTMLInputElement>(null);
     const [accountMenuOpen, setAccountMenuOpen] = useState(false);
     const accountMenuRef = useRef<HTMLDivElement>(null);
-    /** Evită mismatch SSR/client: usePathname() poate diferi la primul paint. */
+    /** Evita mismatch SSR/client: usePathname() poate diferi la primul paint. */
     const [libraryHeaderReady, setLibraryHeaderReady] = useState(false);
 
+    /* --- Efecte: sincronizare UI cu ruta si sesiune --- */
     useEffect(() => {
         setLibraryHeaderReady(true);
     }, []);
 
+    /** Sincronizeaza meniul activ cu rutele lista-redare / setari. */
     useEffect(() => {
         if (pathname === "/lista-redare") {
             setActiveMenu("lista-redare");
@@ -54,6 +59,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         }
     }, [pathname]);
 
+    /** Redirect la /intro daca lipseste token pe rute private; incarca email si rol. */
     useEffect(() => {
         const publicPage =
             pathname === "/intro" ||
@@ -70,18 +76,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionat doar la mount; router.replace e idempotent
     }, [pathname]);
 
+    /** Asculta eveniment global pentru reset meniu la biblioteca. */
     useEffect(() => {
         const reseteazaMeniul = () => setActiveMenu("biblioteca");
         window.addEventListener("reseteaza-meniu", reseteazaMeniul);
         return () => window.removeEventListener("reseteaza-meniu", reseteazaMeniul);
     }, []);
 
+    /** Marcheaza meniul "text" dupa incarcare document din flyout. */
     useEffect(() => {
         const peDocumentIncarcat = () => setActiveMenu("text");
         window.addEventListener("document-text-incarcat", peDocumentIncarcat);
         return () => window.removeEventListener("document-text-incarcat", peDocumentIncarcat);
     }, []);
 
+    /** Inchide meniul cont la click in afara sau Escape. */
     useEffect(() => {
         if (!accountMenuOpen) return;
         const inchide = (e: MouseEvent) => {
@@ -99,6 +108,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         };
     }, [accountMenuOpen]);
 
+    /* --- Handlere: navigare, upload fisier, actiuni sidebar --- */
+    /** Navigheaza la / apoi ruleaza callback (pentru evenimente pe Home). */
     const goHomeThen = (fn: () => void) => {
         if (pathname !== "/") {
             router.push("/");
@@ -108,6 +119,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         }
     };
 
+    /** POST /extrage_fisier: extrage text si deschide editorul pe pagina principala. */
     const incarcaFisierSiDeschideEditor = async (file: File | undefined) => {
         if (!file) return;
         if (isGuestSession() && isImageUploadFile(file)) {
@@ -140,6 +152,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             const detail = {
                 titlu: data.titlu_sugerat || file.name.replace(/\.[^/.]+$/, ""),
                 text: data.text as string,
+                extract_meta: (data.extract_meta as Record<string, unknown> | undefined) ?? null,
             };
             goHomeThen(() =>
                 window.dispatchEvent(new CustomEvent("document-text-incarcat", { detail })),
@@ -184,6 +197,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         router.push("/setari");
     };
 
+    /** Clase CSS pentru butonul de navigare activ/inactiv din sidebar. */
     const stilButonNavigare = (numeMeniu: string) => {
         if (activeMenu === numeMeniu) {
             return (
@@ -197,15 +211,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     const isGuest = userRol === "guest";
 
+    /* --- Randare: pagina publica (fara chrome) --- */
     if (isPublicPage) {
         return <>{children}</>;
     }
 
+    /* --- Randare: layout principal cu sidebar si header --- */
     return (
         <div
             className="flex h-screen w-full overflow-hidden"
             style={{ backgroundColor: "var(--page-bg)" }}
         >
+            {/* Sidebar verde: logo, navigare, flyout upload */}
             <aside
                 className="relative z-20 flex w-64 flex-col"
                 style={{
@@ -484,6 +501,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 />
             </aside>
 
+            {/* Zona principala: header biblioteca + continut pagina */}
             <div className="z-10 flex min-w-0 flex-1 flex-col">
                 <header
                     className="flex h-16 items-center justify-end gap-4 overflow-visible px-8"
@@ -499,6 +517,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         {libraryHeaderReady && pathname === "/" && <LibraryViewModeToggle />}
                         <ThemeToggle />
                     </div>
+                    {/* Meniu cont: guest (login/register) sau utilizator autentificat */}
                     <div className="relative flex items-center gap-0.5 shrink-0" ref={accountMenuRef}>
                         {userRol === "guest" ? (
                             <div className="flex items-center gap-2">
