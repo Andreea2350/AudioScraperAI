@@ -269,6 +269,34 @@ export async function fetchCarteSegmente(carteId: number): Promise<CarteSegment[
     return data.data ?? [];
 }
 
+/** Generează rezumat AI pentru o carte (nu modifică audio). */
+export async function fetchCarteRezumat(carteId: number): Promise<string> {
+    const res = await fetch(`${API_BASE}/carti/${carteId}/rezumat`, {
+        method: "POST",
+        headers: authHeadersJson(),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        throw new Error(mesajEroareFastAPI(data, `HTTP ${res.status}`));
+    }
+    const rezumat = (data as { rezumat?: string }).rezumat;
+    if (!rezumat?.trim()) {
+        throw new Error(mesajEroareFastAPI(data, "Rezumat gol."));
+    }
+    return rezumat.trim();
+}
+
+/** Înregistrează deschiderea unei cărți în bibliotecă (ultima_accesare în Supabase). */
+export async function touchCarteAccess(carteId: number): Promise<string | null> {
+    const res = await fetch(`${API_BASE}/carti/${carteId}/acces`, {
+        method: "PATCH",
+        headers: authHeadersJson(),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { ultima_accesare?: string };
+    return data.ultima_accesare ?? null;
+}
+
 /** Transform randurile din DB in formatul folosit de GenerationPlaylist. */
 export function segmentsFromCarteDb(rows: CarteSegment[], playlistMode: PlaylistMode = "parts"): GenerationSegment[] {
     return rows.map((r) => ({

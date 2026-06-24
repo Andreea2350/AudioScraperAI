@@ -4,21 +4,26 @@
  * Lista de redare: adaugi URL-uri sau fisiere, extragi text (POST /extrage_fisier), apoi generezi audio
  * in ordinea randurilor. Drag-and-drop reordoneaza; fiecare rand are propriul status in UI.
  */
-import { useCallback, useMemo, useRef, useState } from "react";
-import { API_BASE, authHeadersJson, authHeadersMultipart, isAbortError, isGuestSession } from "@/lib/api";
-import { DOCUMENT_FILE_ACCEPT, IMAGE_FILE_ACCEPT, isImageUploadFile } from "@/lib/fileUploadAccept";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE, authHeadersMultipart, isGuestSession } from "@/lib/api";
+import { DOCUMENT_FILE_ACCEPT, IMAGE_FILE_ACCEPT } from "@/lib/fileUploadAccept";
 import { useI18n } from "@/lib/i18n";
+import { showToast } from "@/lib/toast";
+import { confirmDialog } from "@/lib/confirm";
 import { TtsVoicePicker } from "@/components/TtsVoicePicker";
 import { getStoredTtsVoice, setStoredTtsVoice } from "@/lib/ttsVoiceStorage";
+import {
+    cancelActiveGenerationJob,
+    guardGenerationStart,
+    isGenerationBusy,
+    registerPlaylistBatchCallbacks,
+    runPlaylistCombined,
+    runPlaylistSeparate,
+    useGenerationJob,
+    type PlaylistItemStatus,
+} from "@/lib/generationJob";
 
-/** Status posibil al unui rand din lista de redare. */
-export type PlaylistItemStatus =
-    | "pregatit"
-    | "asteptare"
-    | "extragere"
-    | "generare"
-    | "gata"
-    | "eroare";
+export type { PlaylistItemStatus };
 
 /** Tip sursa: link web sau document incarcat. */
 export type PlaylistSourceKind = "url" | "document";
@@ -30,10 +35,29 @@ export type PlaylistItem = {
     label: string;
     url?: string;
     titlu?: string;
+    filename?: string;
     extractedText?: string;
     status: PlaylistItemStatus;
     errorMessage?: string;
 };
+
+/** Titlu sugerat pentru modul „o singură carte” (varianta C hibrid). */
+function buildSuggestedCombinedTitle(
+    items: PlaylistItem[],
+    suffix: string,
+    fallback: string,
+): string {
+    const withContent = items.filter(
+        (it) =>
+            (it.sourceKind === "url" && it.url) ||
+            (it.sourceKind === "document" && it.extractedText),
+    );
+    if (withContent.length === 0) return "";
+    const firstTitle = (withContent[0].titlu || withContent[0].label || "").trim();
+    if (withContent.length === 1) return firstTitle;
+    if (firstTitle) return `${firstTitle} ${suffix}`;
+    return `${fallback} (${withContent.length})`;
+}
 
 /** Genereaza ID unic pentru rand nou (crypto.randomUUID sau fallback). */
 function newId() {
@@ -62,34 +86,74 @@ export default function ListaRedarePage() {
     const [items, setItems] = useState<PlaylistItem[]>([]);
     const [urlInput, setUrlInput] = useState("");
     const [urlModalOpen, setUrlModalOpen] = useState(false);
-    const [batchRunning, setBatchRunning] = useState(false);
     const [dragId, setDragId] = useState<string | null>(null);
-    const [imageLockedMsg, setImageLockedMsg] = useState<string | null>(null);
+    const [guestLockedMsg, setGuestLockedMsg] = useState<string | null>(null);
     const [ttsVoice, setTtsVoice] = useState(() => getStoredTtsVoice());
+    const [combinedMode, setCombinedMode] = useState(false);
+    const [combinedTitle, setCombinedTitle] = useState("");
+    const [combinedTitleTouched, setCombinedTitleTouched] = useState(false);
     const isGuest = isGuestSession();
+    const genJob = useGenerationJob();
+    const batchRunning =
+        genJob.busy &&
+        (genJob.kind === "playlist-separate" || genJob.kind === "playlist-combined");
     const docRef = useRef<HTMLInputElement>(null);
     const imgRef = useRef<HTMLInputElement>(null);
-    const batchAbortRef = useRef<AbortController | null>(null);
 
-    const cancelBatch = useCallback(() => {
-        if (typeof window !== "undefined" && !window.confirm(t("gen.cancelConfirm"))) {
-            return;
-        }
-        batchAbortRef.current?.abort();
-        batchAbortRef.current = null;
-        setBatchRunning(false);
-        setItems((prev) =>
-            prev.map((it) =>
-                it.status === "generare"
-                    ? { ...it, status: "pregatit", errorMessage: undefined }
-                    : it,
+    useEffect(() => {
+        registerPlaylistBatchCallbacks({
+            onItemStatus: (id, status, errorMessage) => {
+                setItems((prev) =>
+                    prev.map((it) =>
+                        it.id === id ? { ...it, status, errorMessage } : it,
+                    ),
+                );
+            },
+            onBatchCancelled: () => {
+                setItems((prev) =>
+                    prev.map((it) =>
+                        it.status === "generare" || it.status === "extragere"
+                            ? { ...it, status: "pregatit", errorMessage: undefined }
+                            : it,
+                    ),
+                );
+            },
+        });
+        return () => registerPlaylistBatchCallbacks(null);
+    }, []);
+
+    const suggestedCombinedTitle = useMemo(
+        () =>
+            buildSuggestedCombinedTitle(
+                items,
+                t("playlist.combinedTitleSuffix"),
+                t("playlist.combinedTitleFallback"),
             ),
-        );
+        [items, t],
+    );
+
+    useEffect(() => {
+        if (!combinedMode || combinedTitleTouched) return;
+        setCombinedTitle(suggestedCombinedTitle);
+    }, [combinedMode, suggestedCombinedTitle, combinedTitleTouched]);
+
+    const showGuestSourceLocked = useCallback(() => {
+        setGuestLockedMsg(t("shell.playlistGuestLocked"));
+    }, [t]);
+
+    const cancelBatch = useCallback(async () => {
+        const ok = await confirmDialog({ message: t("gen.cancelConfirm"), title: t("gen.cancelGeneration") });
+        if (!ok) return;
+        await cancelActiveGenerationJob();
     }, [t]);
 
     /* --- Handlere: adaugare surse (URL, fisier) --- */
     /** Valideaza URL si adauga un rand nou in coada. */
     const addUrl = () => {
+        if (isGuest) {
+            showGuestSourceLocked();
+            return;
+        }
         const u = urlInput.trim();
         if (!u) return;
         try {
@@ -100,7 +164,7 @@ export default function ListaRedarePage() {
             // eslint-disable-next-line no-new
             new URL(u);
         } catch {
-            alert(t("playlist.invalidUrl"));
+            showToast(t("playlist.invalidUrl"), "error");
             return;
         }
         setItems((prev) => [
@@ -142,11 +206,11 @@ export default function ListaRedarePage() {
     /** Adauga fisier in lista, extrage text si actualizeaza statusul randului. */
     const onPickFile = async (file: File | undefined) => {
         if (!file) return;
-        if (isGuest && isImageUploadFile(file)) {
-            setImageLockedMsg(t("shell.imageLocked"));
+        if (isGuest) {
+            showGuestSourceLocked();
             return;
         }
-        setImageLockedMsg(null);
+        setGuestLockedMsg(null);
         const id = newId();
         setItems((prev) => [
             ...prev,
@@ -154,6 +218,7 @@ export default function ListaRedarePage() {
                 id,
                 sourceKind: "document",
                 label: file.name,
+                filename: file.name,
                 status: "extragere",
             },
         ]);
@@ -220,95 +285,31 @@ export default function ListaRedarePage() {
         setDragId(null);
     };
 
-    /**
-     * Proceseaza coada in ordine: extrage URL sau genereaza din text,
-     * apoi declanseaza reincarca-istoric pe biblioteca.
-     */
     const runBatch = async () => {
-        const queue = items.filter(
-            (it) =>
-                it.status === "pregatit" ||
-                it.status === "eroare",
-        );
+        const queue = items.filter((it) => it.status === "pregatit" || it.status === "eroare");
         if (queue.length === 0) {
-            alert(t("playlist.nothingToGenerate"));
+            showToast(t("playlist.nothingToGenerate"), "error");
             return;
         }
-        setBatchRunning(true);
-        batchAbortRef.current?.abort();
-        const ac = new AbortController();
-        batchAbortRef.current = ac;
-        for (const q of queue) {
-            if (ac.signal.aborted) break;
-            setItems((prev) =>
-                prev.map((it) =>
-                    it.id === q.id ? { ...it, status: "generare", errorMessage: undefined } : it,
-                ),
-            );
-            try {
-                if (q.sourceKind === "url" && q.url) {
-                    const res = await fetch(`${API_BASE}/extrage`, {
-                        method: "POST",
-                        headers: authHeadersJson(),
-                        body: JSON.stringify({ url: q.url, force_regenerate: false, tts_voice: ttsVoice }),
-                        signal: ac.signal,
-                    });
-                    const data = await res.json();
-                    if (!res.ok) {
-                        throw new Error(
-                            typeof data.detail === "string" ? data.detail : "Eroare la extragere URL",
-                        );
-                    }
-                    if (data.status === "Eroare") {
-                        throw new Error(data.detalii || data.message || "Eroare la procesare");
-                    }
-                } else if (q.sourceKind === "document" && q.titlu && q.extractedText) {
-                    const res = await fetch(`${API_BASE}/genereaza_text`, {
-                        method: "POST",
-                        headers: authHeadersJson(),
-                        body: JSON.stringify({ titlu: q.titlu, text: q.extractedText, tts_voice: ttsVoice }),
-                        signal: ac.signal,
-                    });
-                    const data = await res.json();
-                    if (!res.ok) {
-                        throw new Error(
-                            typeof data.detail === "string" ? data.detail : "Eroare la generare",
-                        );
-                    }
-                    if (data.status === "error") {
-                        throw new Error(data.message || "Eroare");
-                    }
-                } else {
-                    throw new Error(t("playlist.incompleteItem"));
-                }
-                setItems((prev) =>
-                    prev.map((it) => (it.id === q.id ? { ...it, status: "gata" } : it)),
-                );
-            } catch (e) {
-                if (isAbortError(e)) {
-                    setItems((prev) =>
-                        prev.map((it) =>
-                            it.id === q.id
-                                ? { ...it, status: "pregatit", errorMessage: undefined }
-                                : it,
-                        ),
-                    );
-                    break;
-                }
-                const msg = e instanceof Error ? e.message : t("playlist.unknownError");
-                setItems((prev) =>
-                    prev.map((it) =>
-                        it.id === q.id ? { ...it, status: "eroare", errorMessage: msg } : it,
-                    ),
-                );
+        if (!guardGenerationStart(t)) return;
+
+        if (combinedMode) {
+            const title = combinedTitle.trim();
+            if (!title) {
+                showToast(t("playlist.combinedTitleRequired"), "error");
+                return;
             }
+            await runPlaylistCombined(queue, title, ttsVoice, t);
+        } else {
+            await runPlaylistSeparate(queue, ttsVoice, t);
         }
-        batchAbortRef.current = null;
-        setBatchRunning(false);
-        window.dispatchEvent(new Event("reincarca-istoric"));
     };
 
     const readyCount = items.filter((it) => it.status === "pregatit" || it.status === "eroare").length;
+    const canGenerate =
+        readyCount > 0 &&
+        (!combinedMode || combinedTitle.trim().length > 0) &&
+        !isGenerationBusy();
 
     return (
         <div className="p-4 lg:p-8 max-w-4xl mx-auto pb-24">
@@ -338,64 +339,77 @@ export default function ListaRedarePage() {
             <div className="flex flex-wrap gap-3 mb-6">
                 <button
                     type="button"
-                    onClick={() => setUrlModalOpen(true)}
+                    onClick={() => {
+                        if (isGuest) {
+                            showGuestSourceLocked();
+                            return;
+                        }
+                        setGuestLockedMsg(null);
+                        setUrlModalOpen(true);
+                    }}
                     disabled={batchRunning}
-                    className="px-4 py-2.5 rounded-xl text-sm font-extrabold text-white disabled:opacity-50"
+                    title={isGuest ? t("shell.playlistGuestLockedTitle") : undefined}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-extrabold disabled:opacity-50 flex items-center gap-2 ${
+                        isGuest
+                            ? "border-2 border-[var(--border-card)] cursor-not-allowed opacity-70 font-bold"
+                            : "text-white"
+                    }`}
                     style={{
-                        background: "linear-gradient(135deg, #408A71, #285A48)",
-                        boxShadow: "var(--shadow-btn-sm)",
+                        background: isGuest ? "var(--card-bg)" : "linear-gradient(135deg, #408A71, #285A48)",
+                        boxShadow: isGuest ? "none" : "var(--shadow-btn-sm)",
+                        color: isGuest ? "var(--text-muted)" : undefined,
                     }}
                 >
                     {t("playlist.addWebLink")}
-                </button>
-                <button
-                    type="button"
-                    onClick={() => docRef.current?.click()}
-                    disabled={batchRunning}
-                    className="px-4 py-2.5 rounded-xl text-sm font-bold border-2 border-mid-green text-mid-green hover:bg-surface-green/50 disabled:opacity-50"
-                    style={{ background: "var(--card-bg)" }}
-                >
-                    {t("playlist.addDocument")}
+                    {isGuest ? <span className="text-sm leading-none opacity-60" aria-hidden>🔒</span> : null}
                 </button>
                 <button
                     type="button"
                     onClick={() => {
                         if (isGuest) {
-                            setImageLockedMsg(t("shell.imageLocked"));
+                            showGuestSourceLocked();
                             return;
                         }
-                        setImageLockedMsg(null);
+                        setGuestLockedMsg(null);
+                        docRef.current?.click();
+                    }}
+                    disabled={batchRunning}
+                    title={isGuest ? t("shell.playlistGuestLockedTitle") : undefined}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-bold border-2 disabled:opacity-50 flex items-center gap-2 ${
+                        isGuest
+                            ? "border-[var(--border-card)] cursor-not-allowed opacity-70"
+                            : "border-mid-green text-mid-green hover:bg-surface-green/50"
+                    }`}
+                    style={{ background: "var(--card-bg)", color: isGuest ? "var(--text-muted)" : undefined }}
+                >
+                    {t("playlist.addDocument")}
+                    {isGuest ? <span className="text-sm leading-none opacity-60" aria-hidden>🔒</span> : null}
+                </button>
+                <button
+                    type="button"
+                    onClick={() => {
+                        if (isGuest) {
+                            showGuestSourceLocked();
+                            return;
+                        }
+                        setGuestLockedMsg(null);
                         imgRef.current?.click();
                     }}
                     disabled={batchRunning}
-                    title={isGuest ? t("shell.imageLockedTitle") : undefined}
+                    title={isGuest ? t("shell.playlistGuestLockedTitle") : undefined}
                     className={`px-4 py-2.5 rounded-xl text-sm font-bold border-2 disabled:opacity-50 flex items-center gap-2 ${
                         isGuest
-                            ? "border-[var(--border-card)] cursor-not-allowed opacity-70 pr-3"
+                            ? "border-[var(--border-card)] cursor-not-allowed opacity-70"
                             : "border-ocean text-ocean hover:bg-ocean-light/30"
                     }`}
                     style={{ background: "var(--card-bg)", color: isGuest ? "var(--text-muted)" : undefined }}
                 >
-                    <span className="flex items-center gap-1.5">
-                        {t("playlist.addImage")}
-                        {isGuest ? (
-                            <span
-                                className="text-[9px] font-extrabold uppercase tracking-wide rounded-full px-1.5 py-0.5"
-                                style={{ background: "rgba(196,147,63,0.12)", color: "#C4933F" }}
-                            >
-                                {t("shell.imageBadgeAccount")}
-                            </span>
-                        ) : null}
-                    </span>
-                    {isGuest ? (
-                        <span className="ml-1 text-sm leading-none opacity-60" aria-hidden>
-                            🔒
-                        </span>
-                    ) : null}
+                    {t("playlist.addImage")}
+                    {isGuest ? <span className="text-sm leading-none opacity-60" aria-hidden>🔒</span> : null}
                 </button>
-                {imageLockedMsg ? (
+                {guestLockedMsg ? (
                     <p className="w-full text-xs font-medium px-1" style={{ color: "#C4933F" }}>
-                        {imageLockedMsg}
+                        {guestLockedMsg}
                     </p>
                 ) : null}
                 <input
@@ -546,6 +560,86 @@ export default function ListaRedarePage() {
                 </ul>
             )}
 
+            {items.length > 0 && (
+                <div
+                    className="mt-6 rounded-2xl border p-5"
+                    style={{
+                        background: "var(--card-bg)",
+                        borderColor: "var(--border-card)",
+                        boxShadow: "var(--shadow-card-sm)",
+                    }}
+                >
+                    <p
+                        className="text-[10px] font-extrabold uppercase tracking-wider mb-3"
+                        style={{ color: "var(--text-muted)" }}
+                    >
+                        {t("playlist.outputModeLabel")}
+                    </p>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                        <button
+                            type="button"
+                            disabled={batchRunning}
+                            onClick={() => setCombinedMode(false)}
+                            className="px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors disabled:opacity-50"
+                            style={{
+                                borderColor: !combinedMode ? "#408A71" : "var(--border-card)",
+                                background: !combinedMode ? "rgba(64,138,113,0.12)" : "var(--card-bg)",
+                                color: !combinedMode ? "#408A71" : "var(--text-muted)",
+                            }}
+                        >
+                            {t("playlist.outputModeSeparate")}
+                        </button>
+                        <button
+                            type="button"
+                            disabled={batchRunning}
+                            onClick={() => {
+                                setCombinedMode(true);
+                                setCombinedTitleTouched(false);
+                            }}
+                            className="px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors disabled:opacity-50"
+                            style={{
+                                borderColor: combinedMode ? "#408A71" : "var(--border-card)",
+                                background: combinedMode ? "rgba(64,138,113,0.12)" : "var(--card-bg)",
+                                color: combinedMode ? "#408A71" : "var(--text-muted)",
+                            }}
+                        >
+                            {t("playlist.outputModeCombined")}
+                        </button>
+                    </div>
+                    <p className="text-xs font-medium mb-4 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                        {combinedMode ? t("playlist.outputModeHintCombined") : t("playlist.outputModeHintSeparate")}
+                    </p>
+                    {combinedMode ? (
+                        <div>
+                            <label
+                                className="block text-xs font-extrabold uppercase tracking-wider mb-2"
+                                style={{ color: "var(--text-muted)" }}
+                                htmlFor="combined-title"
+                            >
+                                {t("playlist.combinedTitleLabel")}
+                            </label>
+                            <input
+                                id="combined-title"
+                                type="text"
+                                value={combinedTitle}
+                                onChange={(e) => {
+                                    setCombinedTitleTouched(true);
+                                    setCombinedTitle(e.target.value);
+                                }}
+                                placeholder={t("playlist.combinedTitlePlaceholder")}
+                                disabled={batchRunning}
+                                className="w-full rounded-xl p-3 text-sm border-2"
+                                style={{
+                                    borderColor: "var(--input-border)",
+                                    background: "var(--input-bg)",
+                                    color: "var(--text-body)",
+                                }}
+                            />
+                        </div>
+                    ) : null}
+                </div>
+            )}
+
             {/* Buton fix jos: genereaza batch pentru randurile pregatite */}
             {items.length > 0 && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 lg:left-[calc(50%+8rem)] z-40 flex gap-3">
@@ -565,7 +659,7 @@ export default function ListaRedarePage() {
                     ) : null}
                     <button
                         type="button"
-                        disabled={batchRunning || readyCount === 0}
+                        disabled={batchRunning || !canGenerate}
                         onClick={() => void runBatch()}
                         className="px-8 py-4 rounded-full font-extrabold text-sm text-white shadow-lg disabled:opacity-50"
                         style={{

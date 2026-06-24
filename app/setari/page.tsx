@@ -7,8 +7,9 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { LanguageToggle } from "@/components/LanguageToggle";
+import { ReadingFontToggle } from "@/components/ReadingFontToggle";
 import { rightsAdminList, rightsGuestList, rightsUserList, roleLabel, useI18n } from "@/lib/i18n";
-import { applyTheme, readDomTheme } from "@/lib/theme";
+import { applyTheme, readStoredThemePreference, type ThemePreference } from "@/lib/theme";
 
 type RolUtilizator = "admin" | "user" | "guest" | null;
 
@@ -54,17 +55,17 @@ export default function PaginaSetari() {
     /* --- Stare: profil utilizator si tema --- */
     const [rol, setRol] = useState<RolUtilizator>(null);
     const [email, setEmail] = useState<string>("");
-    const [tema, setTema] = useState<"light" | "dark">("light");
+    const [tema, setTema] = useState<ThemePreference>("system");
 
     /** Citeste rol, email si tema curenta din localStorage / DOM la mount. */
     useEffect(() => {
         setRol((typeof window !== "undefined" ? localStorage.getItem("rol") : null) as RolUtilizator);
         setEmail(typeof window !== "undefined" ? localStorage.getItem("email") || "" : "");
-        setTema(readDomTheme());
+        setTema(readStoredThemePreference());
     }, []);
 
-    /** Aplica tema light/dark si persista in localStorage. */
-    const seteazaTema = (mode: "light" | "dark") => {
+    /** Aplica tema light/dark/system si persista in localStorage. */
+    const seteazaTema = (mode: ThemePreference) => {
         applyTheme(mode);
         setTema(mode);
     };
@@ -79,15 +80,6 @@ export default function PaginaSetari() {
 
     return (
         <div className="mx-auto max-w-2xl px-4 py-8 lg:px-8 lg:py-10" style={{ animation: "fade-in 0.3s ease-out" }}>
-            {/* Link inapoi la biblioteca */}
-            <Link
-                href="/"
-                className="mb-6 inline-flex text-xs font-extrabold uppercase tracking-widest transition-colors"
-                style={{ color: "var(--text-muted)" }}
-            >
-                {t("settings.back")}
-            </Link>
-
             <h1 className="text-3xl font-extrabold tracking-tight" style={{ color: "var(--text-primary)" }}>
                 {t("settings.title")}
             </h1>
@@ -148,6 +140,9 @@ export default function PaginaSetari() {
                             <p className="text-sm" style={{ color: "var(--text-body)" }}>
                                 {t("settings.languageHint")}
                             </p>
+                            <p className="mt-2 text-xs font-medium" style={{ color: "var(--text-faint)" }}>
+                                {t("settings.languageHeaderHint")}
+                            </p>
                             <div className="mt-4">
                                 <LanguageToggle />
                             </div>
@@ -189,6 +184,33 @@ export default function PaginaSetari() {
                                 >
                                     {t("settings.dark")}
                                 </button>
+                                <button
+                                    type="button"
+                                    onClick={() => seteazaTema("system")}
+                                    className="rounded-xl px-5 py-2.5 text-sm font-extrabold transition-all duration-200"
+                                    style={{
+                                        background: tema === "system" ? "linear-gradient(135deg, #408A71, #285A48)" : "var(--card-bg-muted)",
+                                        color: tema === "system" ? "#fff" : "var(--text-body)",
+                                        border: `2px solid ${tema === "system" ? "transparent" : "var(--border-card)"}`,
+                                        boxShadow: tema === "system" ? "var(--shadow-btn-sm)" : "none",
+                                    }}
+                                >
+                                    {t("settings.system")}
+                                </button>
+                            </div>
+                        </>
+                    }
+                />
+
+                <Card
+                    titlu={t("readingFont.sectionLabel")}
+                    copii={
+                        <>
+                            <p className="text-sm" style={{ color: "var(--text-body)" }}>
+                                {t("readingFont.hint")}
+                            </p>
+                            <div className="mt-4">
+                                <ReadingFontToggle variant="settings" />
                             </div>
                         </>
                     }
@@ -236,7 +258,7 @@ export default function PaginaSetari() {
                                 {t("settings.publicPageBody")}
                             </p>
                             <Link
-                                href="/intro"
+                                href="/"
                                 className="mt-4 inline-flex text-sm font-bold transition-colors"
                                 style={{ color: "var(--link-accent)" }}
                             >

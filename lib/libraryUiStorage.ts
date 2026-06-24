@@ -3,8 +3,11 @@
  * Nu exista inca camp pe server; la alt browser sau dupa clear cookies se pierde maparea.
  */
 
+/** Eveniment: detail.open = true cand o carte e deschisa pe pagina principala. */
+export const LIBRARY_BOOK_VIEW_EVENT = "library-book-view";
+
 export type LibraryViewMode = "grid" | "list";
-export type LibrarySortKey = "nume" | "dimensiune" | "data";
+export type LibrarySortKey = "nume" | "dimensiune" | "data" | "acces";
 export type LibrarySortDir = "asc" | "desc";
 
 export type LibraryFolder = { id: string; name: string };
@@ -38,7 +41,7 @@ const defaultState: LibraryPersisted = {
     folders: [],
     bookFolderId: {},
     viewMode: "grid",
-    sortKey: "data",
+    sortKey: "acces",
     sortDir: "desc",
     nameFilter: "",
 };
@@ -55,9 +58,9 @@ export function loadLibraryUi(): LibraryPersisted {
             bookFolderId: j.bookFolderId && typeof j.bookFolderId === "object" ? j.bookFolderId : {},
             viewMode: j.viewMode === "list" ? "list" : "grid",
             sortKey:
-                j.sortKey === "nume" || j.sortKey === "dimensiune" || j.sortKey === "data"
+                j.sortKey === "nume" || j.sortKey === "dimensiune" || j.sortKey === "data" || j.sortKey === "acces"
                     ? j.sortKey
-                    : "data",
+                    : "acces",
             sortDir: j.sortDir === "asc" ? "asc" : "desc",
             nameFilter: typeof j.nameFilter === "string" ? j.nameFilter : "",
         };
@@ -111,8 +114,8 @@ export function parseSortPresetValue(v: string): { sortKey: LibrarySortKey; sort
     const parts = v.split("-");
     const k = parts[0];
     const d = parts[1];
-    let sortKey: LibrarySortKey = "data";
-    if (k === "nume" || k === "dimensiune" || k === "data") sortKey = k;
+    let sortKey: LibrarySortKey = "acces";
+    if (k === "nume" || k === "dimensiune" || k === "data" || k === "acces") sortKey = k;
     const sortDir: LibrarySortDir = d === "asc" ? "asc" : "desc";
     return { sortKey, sortDir };
 }
@@ -127,6 +130,50 @@ export function setPersistedLibraryViewMode(mode: LibraryViewMode): void {
     const s = loadLibraryUi();
     saveLibraryUi({ ...s, viewMode: mode });
     window.dispatchEvent(new CustomEvent("audiobooks-library-view-mode", { detail: { mode } }));
+}
+
+/* --- Audiobook-ul de prezentare (carte virtuala, per utilizator/guest) --- */
+
+/** Id rezervat pentru audiobook-ul de prezentare; nu se ciocneste cu id-uri numerice din DB. */
+export const WELCOME_BOOK_ID = "welcome" as const;
+
+const WELCOME_PREFIX = "audiobooks-welcome:";
+
+export type WelcomeState = { dismissed: boolean; title: string | null };
+
+/** Citesc starea cartii de prezentare (stearsa? redenumita?) pentru utilizatorul curent. */
+export function getWelcomeState(): WelcomeState {
+    if (typeof window === "undefined") return { dismissed: false, title: null };
+    try {
+        const raw = localStorage.getItem(WELCOME_PREFIX + libraryStorageUserKey());
+        if (!raw) return { dismissed: false, title: null };
+        const j = JSON.parse(raw) as Partial<WelcomeState>;
+        return {
+            dismissed: j.dismissed === true,
+            title: typeof j.title === "string" ? j.title : null,
+        };
+    } catch {
+        return { dismissed: false, title: null };
+    }
+}
+
+function saveWelcomeState(state: WelcomeState): void {
+    if (typeof window === "undefined") return;
+    try {
+        localStorage.setItem(WELCOME_PREFIX + libraryStorageUserKey(), JSON.stringify(state));
+    } catch {
+        /* ignor */
+    }
+}
+
+/** Marchez cartea de prezentare ca stearsa (nu mai reapare la reincarcare). */
+export function setWelcomeDismissed(): void {
+    saveWelcomeState({ ...getWelcomeState(), dismissed: true });
+}
+
+/** Salvez titlul redenumit pentru cartea de prezentare. */
+export function setWelcomeTitle(title: string): void {
+    saveWelcomeState({ ...getWelcomeState(), title });
 }
 
 export function getBookFolderId(map: Record<string, string | null>, bookId: number): string | null {

@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { APP_HOME_PATH } from "@/lib/routes";
 import { API_BASE, getStoredGuestSessionId, isGuestSession, setStoredGuestSessionId } from "@/lib/api";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -133,7 +134,7 @@ function LoginPageContent() {
         if (typeof window !== "undefined") {
             const token = localStorage.getItem("token");
             if (token && !isGuestSession()) {
-                router.replace("/");
+                router.replace(APP_HOME_PATH);
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionat doar la mount; router.replace e stabil
@@ -198,7 +199,7 @@ function LoginPageContent() {
             if (typeof data.guest_session_id === "string") {
                 setStoredGuestSessionId(data.guest_session_id);
             }
-            router.push("/");
+            router.push(APP_HOME_PATH);
         } catch {
             setError(t("login.serverError"));
         } finally {
@@ -231,7 +232,7 @@ function LoginPageContent() {
             localStorage.setItem("token", data.token);
             localStorage.setItem("rol", data.rol);
             localStorage.setItem("email", data.email ?? "");
-            router.push("/");
+            router.push(APP_HOME_PATH);
         } catch {
             setError(t("login.serverError"));
         } finally {
@@ -299,11 +300,30 @@ function LoginPageContent() {
 
                     <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
                         <Link
-                            href="/intro"
-                            className="inline-flex items-center text-xs font-extrabold uppercase tracking-widest transition-colors"
-                            style={{ color: "var(--text-muted)" }}
+                            href="/"
+                            aria-label={t("login.back")}
+                            title={t("login.back")}
+                            className="group inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-all duration-200"
+                            style={{
+                                borderColor: "var(--theme-toggle-border)",
+                                background: "var(--theme-toggle-bg)",
+                                color: "var(--theme-toggle-fg)",
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--hover-bg)")}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = "var(--theme-toggle-bg)")}
                         >
-                            {t("login.back")}
+                            <svg
+                                className="h-6 w-6 transition-transform duration-200 group-hover:-translate-x-0.5"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="3"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden
+                            >
+                                <path d="M19 12H5M12 19l-7-7 7-7" />
+                            </svg>
                         </Link>
                         <div className="flex items-center gap-2">
                             <LanguageToggle />

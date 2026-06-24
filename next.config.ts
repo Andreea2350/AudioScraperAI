@@ -21,6 +21,9 @@ const nextConfig: NextConfig = {
         if (!backend) return [];
         return [{ source: "/api/:path*", destination: `${backend}/:path*` }];
     },
+    async redirects() {
+        return [{ source: "/intro", destination: "/", permanent: true }];
+    },
 };
 
 export default nextConfig;

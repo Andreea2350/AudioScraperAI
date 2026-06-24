@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Schelet aplicatie: sidebar, header, flyout upload, meniu cont. Pe /intro si /login afiseaza doar children
- * (fara chrome). Redirectioneaza la /intro daca nu exista token pe rute private.
+ * Schelet aplicatie: sidebar, header, flyout upload, meniu cont. Pe / si /login afiseaza doar children
+ * (fara chrome). Redirectioneaza la / daca nu exista token pe rute private.
  */
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
@@ -15,17 +15,20 @@ import { LibrarySearchByFlyout } from "@/components/LibrarySearchByFlyout";
 import { LibrarySortFilterFlyout } from "@/components/LibrarySortFilterFlyout";
 import { LibraryViewModeToggle } from "@/components/LibraryViewModeToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { LanguageToggle } from "@/components/LanguageToggle";
+import { GenerationProgressBar } from "@/components/GenerationProgressBar";
+import { GenerationLeaveGuard } from "@/components/GenerationLeaveGuard";
+import { useGenerationJob } from "@/lib/generationJob";
+import { LIBRARY_BOOK_VIEW_EVENT } from "@/lib/libraryUiStorage";
+import { APP_HOME_PATH, isAppHomePath, isPublicPath, LANDING_PATH } from "@/lib/routes";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
     const { t } = useI18n();
     const pathname = usePathname();
     const router = useRouter();
 
-    /** Rute publice fara sidebar/header (intro, login). */
-    const isPublicPage =
-        pathname === "/intro" ||
-        pathname === "/login" ||
-        (pathname?.startsWith("/intro/") ?? false);
+    /** Rute publice fara sidebar/header (landing, login, redirect /intro). */
+    const isPublicPage = isPublicPath(pathname);
 
     /* --- Stare: navigare, upload, cont utilizator --- */
     const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -41,11 +44,48 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const accountMenuRef = useRef<HTMLDivElement>(null);
     /** Evita mismatch SSR/client: usePathname() poate diferi la primul paint. */
     const [libraryHeaderReady, setLibraryHeaderReady] = useState(false);
+    /** True cand utilizatorul vizualizeaza o carte deschisa pe pagina principala. */
+    const [bookViewOpen, setBookViewOpen] = useState(false);
+    /** Drawer navigare pe ecrane sub lg (<1024px). */
+    const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
     /* --- Efecte: sincronizare UI cu ruta si sesiune --- */
+    const closeMobileNav = () => setMobileNavOpen(false);
+
     useEffect(() => {
         setLibraryHeaderReady(true);
     }, []);
+
+    useEffect(() => {
+        closeMobileNav();
+        setIsUploadOpen(false);
+    }, [pathname]);
+
+    useEffect(() => {
+        if (!mobileNavOpen) return;
+        document.body.style.overflow = "hidden";
+        const peEscape = (e: KeyboardEvent) => {
+            if (e.key === "Escape") closeMobileNav();
+        };
+        document.addEventListener("keydown", peEscape);
+        return () => {
+            document.body.style.overflow = "";
+            document.removeEventListener("keydown", peEscape);
+        };
+    }, [mobileNavOpen]);
+
+    useEffect(() => {
+        const mq = window.matchMedia("(min-width: 1024px)");
+        const onChange = () => {
+            if (mq.matches) setMobileNavOpen(false);
+        };
+        mq.addEventListener("change", onChange);
+        return () => mq.removeEventListener("change", onChange);
+    }, []);
+
+    useEffect(() => {
+        if (!isAppHomePath(pathname)) setBookViewOpen(false);
+    }, [pathname]);
 
     /** Sincronizeaza meniul activ cu rutele lista-redare / setari. */
     useEffect(() => {
@@ -59,16 +99,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         }
     }, [pathname]);
 
-    /** Redirect la /intro daca lipseste token pe rute private; incarca email si rol. */
+    /** Redirect la landing daca lipseste token pe rute private; incarca email si rol. */
     useEffect(() => {
-        const publicPage =
-            pathname === "/intro" ||
-            pathname === "/login" ||
-            (pathname?.startsWith("/intro/") ?? false);
-        if (publicPage) return;
+        if (isPublicPath(pathname)) return;
         const token = localStorage.getItem("token");
         if (!token) {
-            router.replace("/intro");
+            router.replace(LANDING_PATH);
         } else {
             setUserEmail(localStorage.getItem("email"));
             setUserRol(localStorage.getItem("rol"));
@@ -82,6 +118,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         window.addEventListener("reseteaza-meniu", reseteazaMeniul);
         return () => window.removeEventListener("reseteaza-meniu", reseteazaMeniul);
     }, []);
+
+    /** Sincronizeaza header-ul cu vizualizarea unei carti deschise pe /. */
+    useEffect(() => {
+        const onBookView = (e: Event) => {
+            const ce = e as CustomEvent<{ open?: boolean }>;
+            setBookViewOpen(Boolean(ce.detail?.open));
+        };
+        window.addEventListener(LIBRARY_BOOK_VIEW_EVENT, onBookView);
+        return () => window.removeEventListener(LIBRARY_BOOK_VIEW_EVENT, onBookView);
+    }, []);
+
+    const { busy: generationBusy } = useGenerationJob();
+    const lockHint = t("shell.sourceLockedHint");
+    const disableAddText = generationBusy;
+    const disableUpload = generationBusy;
+    const disableDocumentPick = generationBusy;
+    const disableImagePick = generationBusy;
+    const disableWebLink = generationBusy;
 
     /** Marcheaza meniul "text" dupa incarcare document din flyout. */
     useEffect(() => {
@@ -111,8 +165,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     /* --- Handlere: navigare, upload fisier, actiuni sidebar --- */
     /** Navigheaza la / apoi ruleaza callback (pentru evenimente pe Home). */
     const goHomeThen = (fn: () => void) => {
-        if (pathname !== "/") {
-            router.push("/");
+        if (!isAppHomePath(pathname)) {
+            router.push(APP_HOME_PATH);
             window.setTimeout(fn, 120);
         } else {
             fn();
@@ -122,6 +176,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     /** POST /extrage_fisier: extrage text si deschide editorul pe pagina principala. */
     const incarcaFisierSiDeschideEditor = async (file: File | undefined) => {
         if (!file) return;
+        const isImage = isImageUploadFile(file);
+        if (isImage && disableImagePick) return;
+        if (!isImage && disableDocumentPick) return;
         if (isGuestSession() && isImageUploadFile(file)) {
             setDocUploadError(t("shell.imageLocked"));
             return;
@@ -153,12 +210,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 titlu: data.titlu_sugerat || file.name.replace(/\.[^/.]+$/, ""),
                 text: data.text as string,
                 extract_meta: (data.extract_meta as Record<string, unknown> | undefined) ?? null,
+                filename: file.name,
             };
             goHomeThen(() =>
                 window.dispatchEvent(new CustomEvent("document-text-incarcat", { detail })),
             );
             setIsUploadOpen(false);
             setDocUploadError(null);
+            closeMobileNav();
         } catch {
             setDocUploadError(t("shell.uploadNetworkError"));
         } finally {
@@ -167,33 +226,45 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
 
     const deschideModalulDeLink = () => {
+        if (disableWebLink) return;
         setIsUploadOpen(false);
+        closeMobileNav();
         goHomeThen(() => window.dispatchEvent(new Event("deschide-modal-url")));
     };
 
     const apasaAdaugaText = () => {
+        if (disableAddText) return;
         setActiveMenu("text");
+        closeMobileNav();
         goHomeThen(() => window.dispatchEvent(new Event("deschide-modal-text")));
     };
 
     const apasaBiblioteca = () => {
         setActiveMenu("biblioteca");
-        if (pathname !== "/") {
-            router.push("/");
+        closeMobileNav();
+        if (!isAppHomePath(pathname)) {
+            router.push(APP_HOME_PATH);
         } else {
             window.dispatchEvent(new Event("arata-biblioteca"));
         }
     };
 
+    const inapoiLaBiblioteca = () => {
+        window.dispatchEvent(new Event("arata-biblioteca"));
+        window.dispatchEvent(new Event("reseteaza-meniu"));
+    };
+
     const apasaListaRedare = () => {
         setActiveMenu("lista-redare");
         setMaiMulteOpen(true);
+        closeMobileNav();
         router.push("/lista-redare");
     };
 
     const apasaSetari = () => {
         setActiveMenu("setari");
         setMaiMulteOpen(true);
+        closeMobileNav();
         router.push("/setari");
     };
 
@@ -222,33 +293,71 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             className="flex h-screen w-full overflow-hidden"
             style={{ backgroundColor: "var(--page-bg)" }}
         >
-            {/* Sidebar verde: logo, navigare, flyout upload */}
-            <aside
-                className="relative z-20 flex w-64 flex-col"
-                style={{
-                    background: "linear-gradient(180deg, #1a3d2f 0%, #285A48 60%, #2d6652 100%)",
-                    boxShadow: "4px 0 24px rgba(9,20,19,0.2), inset -1px 0 0 rgba(176,228,204,0.08)",
-                }}
-            >
+            <GenerationLeaveGuard />
+
+            {mobileNavOpen ? (
                 <button
                     type="button"
-                    onClick={() => {
-                        setActiveMenu("biblioteca");
-                        router.push("/");
-                    }}
-                    className="w-full cursor-pointer rounded-none border-0 p-6 pb-5 text-left transition-colors hover:bg-white/5"
-                    style={{ borderBottom: "1px solid rgba(176,228,204,0.12)", background: "transparent" }}
-                >
-                    <div className="text-2xl font-extrabold tracking-wider text-white">
-                        AudioScraper<span style={{ color: "#B0E4CC" }}>AI</span>
-                    </div>
-                    <div className="mt-0.5 text-[11px] font-medium" style={{ color: "rgba(176,228,204,0.5)" }}>
-                        {t("shell.tagline")}
-                    </div>
-                </button>
+                    className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+                    onClick={closeMobileNav}
+                    aria-label={t("shell.closeMenu")}
+                />
+            ) : null}
 
-                <nav className="mt-4 flex-1 space-y-1 px-3 text-sm font-medium">
-                    <button type="button" onClick={apasaAdaugaText} className={stilButonNavigare("text")}>
+            {/* Sidebar verde: drawer pe mobil, fix pe lg+ */}
+            <aside
+                className={`fixed inset-y-0 left-0 z-50 flex w-[min(18rem,calc(100vw-2rem))] flex-col transition-transform duration-300 ease-out lg:static lg:z-20 lg:w-64 lg:translate-x-0 ${
+                    mobileNavOpen ? "translate-x-0" : "-translate-x-full"
+                }`}
+                style={{
+                    background: "linear-gradient(180deg, var(--sidebar-from) 0%, var(--sidebar-via) 60%, var(--sidebar-to) 100%)",
+                    boxShadow: "var(--sidebar-shadow)",
+                }}
+            >
+                <div
+                    className="flex items-start justify-between gap-2 border-0 p-6 pb-5"
+                    style={{ borderBottom: "1px solid var(--sidebar-divider)" }}
+                >
+                    <button
+                        type="button"
+                        onClick={apasaBiblioteca}
+                        className="min-w-0 flex-1 cursor-pointer rounded-xl border-0 p-0 text-left transition-colors hover:bg-white/5"
+                        style={{ background: "transparent" }}
+                        aria-label={t("shell.library")}
+                    >
+                        <div className="text-2xl font-extrabold tracking-wider text-white">
+                            AudioScraper<span style={{ color: "var(--sidebar-brand-accent)" }}>AI</span>
+                        </div>
+                        <div className="mt-0.5 text-[11px] font-medium" style={{ color: "var(--sidebar-section)" }}>
+                            {t("shell.tagline")}
+                        </div>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={closeMobileNav}
+                        className="lg:hidden flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                        aria-label={t("shell.closeMenu")}
+                    >
+                        <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
+                            <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+                        </svg>
+                    </button>
+                </div>
+
+                <nav className="mt-4 flex-1 space-y-1 overflow-y-auto px-3 pb-4 text-sm font-medium">
+                    <p
+                        className="px-3 pb-1 pt-1 text-[10px] font-extrabold uppercase tracking-[0.14em]"
+                        style={{ color: "var(--sidebar-section)" }}
+                    >
+                        {t("shell.sectionCreate")}
+                    </p>
+                    <button
+                        type="button"
+                        onClick={apasaAdaugaText}
+                        disabled={disableAddText}
+                        title={disableAddText ? lockHint : undefined}
+                        className={`${stilButonNavigare("text")}${disableAddText ? " opacity-45 cursor-not-allowed" : ""}`}
+                    >
                         <span className="mr-3 text-base opacity-80">✎</span>
                         <span>{t("shell.addText")}</span>
                     </button>
@@ -280,12 +389,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         />
                         <button
                             type="button"
-                            onClick={() => setIsUploadOpen(!isUploadOpen)}
+                            disabled={disableUpload}
+                            title={disableUpload ? lockHint : undefined}
+                            onClick={() => {
+                                if (disableUpload) return;
+                                setIsUploadOpen(!isUploadOpen);
+                            }}
                             className={`w-full flex items-center rounded-xl border-l-[3px] p-3 text-left transition-all duration-200 ${
                                 isUploadOpen
                                     ? "border-light-green/50 bg-white/15 text-white"
                                     : "border-transparent text-white/80 hover:bg-white/10 hover:text-white"
-                            }`}
+                            }${disableUpload ? " opacity-45 cursor-not-allowed" : ""}`}
                         >
                             <span className="mr-3 text-base opacity-80">↑</span>
                             <span>{t("shell.uploadDocument")}</span>
@@ -293,7 +407,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
                         {isUploadOpen && (
                             <div
-                                className="absolute top-0 left-[105%] z-50 ml-2 w-80 overflow-hidden rounded-2xl"
+                                className="absolute left-0 right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-2xl lg:left-[105%] lg:right-auto lg:top-0 lg:mt-0 lg:ml-2 lg:w-80"
                                 style={{
                                     animation: "fade-in 0.25s ease-out",
                                     background: "var(--card-bg)",
@@ -342,12 +456,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                     )}
                                     <button
                                         type="button"
-                                        disabled={docUploadLoading}
+                                        disabled={docUploadLoading || disableDocumentPick}
+                                        title={disableDocumentPick ? lockHint : undefined}
                                         onClick={() => {
+                                            if (disableDocumentPick) return;
                                             setDocUploadError(null);
                                             docFileRef.current?.click();
                                         }}
-                                        className="group flex w-full items-start rounded-xl p-3 text-left transition-colors disabled:opacity-50"
+                                        className={`group flex w-full items-start rounded-xl p-3 text-left transition-colors disabled:opacity-50${
+                                            disableDocumentPick ? " opacity-45 cursor-not-allowed" : ""
+                                        }`}
                                         style={{ color: "var(--text-body)" }}
                                         onMouseEnter={(e) => {
                                             e.currentTarget.style.backgroundColor = "var(--hover-bg)";
@@ -373,8 +491,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
                                     <button
                                         type="button"
-                                        disabled={docUploadLoading}
+                                        disabled={docUploadLoading || disableImagePick}
+                                        title={disableImagePick ? lockHint : undefined}
                                         onClick={() => {
+                                            if (disableImagePick) return;
                                             if (isGuest) {
                                                 setDocUploadError(t("shell.imageLocked"));
                                                 return;
@@ -383,7 +503,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                             imageFileRef.current?.click();
                                         }}
                                         className={`group flex w-full items-center rounded-xl p-3 text-left transition-colors disabled:opacity-50 ${
-                                            isGuest ? "cursor-not-allowed opacity-75" : ""
+                                            isGuest || disableImagePick ? "cursor-not-allowed opacity-75" : ""
                                         }`}
                                         style={{ color: "var(--text-body)" }}
                                         onMouseEnter={(e) => {
@@ -431,8 +551,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
                                     <button
                                         type="button"
+                                        disabled={disableWebLink}
+                                        title={disableWebLink ? lockHint : undefined}
                                         onClick={deschideModalulDeLink}
-                                        className="group flex w-full items-start rounded-xl p-3 text-left transition-colors"
+                                        className={`group flex w-full items-start rounded-xl p-3 text-left transition-colors${
+                                            disableWebLink ? " opacity-45 cursor-not-allowed" : ""
+                                        }`}
                                         style={{ color: "var(--text-body)" }}
                                         onMouseEnter={(e) => {
                                             e.currentTarget.style.backgroundColor = "var(--hover-bg)";
@@ -465,7 +589,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         <span>{t("shell.library")}</span>
                     </button>
 
-                    <div className="my-4" style={{ borderTop: "1px solid rgba(176,228,204,0.12)" }} />
+                    <div className="my-4" style={{ borderTop: "1px solid var(--sidebar-divider)" }} />
 
                     <div>
                         <button
@@ -484,7 +608,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                             <div className="mt-1 ml-2 space-y-0.5 border-l-2 border-white/15 pl-3">
                                 <button type="button" onClick={apasaListaRedare} className={stilButonNavigare("lista-redare")}>
                                     <span className="mr-3 text-base opacity-80">≡</span>
-                                    <span>{t("shell.playlist")}</span>
+                                    <span className="min-w-0 flex-1 text-left">{t("shell.playlist")}</span>
+                                    {isGuest ? (
+                                        <span className="ml-1 text-sm leading-none opacity-70" title={t("shell.playlistGuestLockedTitle")} aria-hidden>
+                                            🔒
+                                        </span>
+                                    ) : null}
                                 </button>
                                 <button type="button" onClick={apasaSetari} className={stilButonNavigare("setari")}>
                                     <span className="mr-3 text-base opacity-80">⚙</span>
@@ -504,26 +633,90 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             {/* Zona principala: header biblioteca + continut pagina */}
             <div className="z-10 flex min-w-0 flex-1 flex-col">
                 <header
-                    className="flex h-16 items-center justify-end gap-4 overflow-visible px-8"
+                    className="flex h-14 min-h-14 items-center gap-2 overflow-visible px-3 sm:gap-3 sm:px-5 lg:h-16 lg:gap-4 lg:px-8"
                     style={{
                         background: "var(--header-bar-bg)",
                         boxShadow: "var(--shadow-header-bar)",
                     }}
                 >
-                    <div className="flex items-center gap-2">
-                        {libraryHeaderReady && pathname === "/" && <LibraryNewFolderButton />}
-                        {libraryHeaderReady && pathname === "/" && <LibrarySearchByFlyout />}
-                        {libraryHeaderReady && pathname === "/" && <LibrarySortFilterFlyout />}
-                        {libraryHeaderReady && pathname === "/" && <LibraryViewModeToggle />}
+                    <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+                        <button
+                            type="button"
+                            onClick={() => setMobileNavOpen(true)}
+                            className="lg:hidden inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-colors"
+                            style={{
+                                borderColor: "var(--theme-toggle-border)",
+                                background: "var(--theme-toggle-bg)",
+                                color: "var(--theme-toggle-fg)",
+                            }}
+                            aria-label={t("shell.openMenu")}
+                            aria-expanded={mobileNavOpen}
+                        >
+                            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
+                                <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
+                            </svg>
+                        </button>
+                        {libraryHeaderReady && ((isAppHomePath(pathname) && bookViewOpen) || pathname === "/setari") ? (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (pathname === "/setari") {
+                                        setActiveMenu("biblioteca");
+                                        router.push(APP_HOME_PATH);
+                                    } else {
+                                        inapoiLaBiblioteca();
+                                    }
+                                }}
+                                aria-label={t("home.back")}
+                                title={t("home.back")}
+                                className="group inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-all duration-200"
+                                style={{
+                                    borderColor: "var(--theme-toggle-border)",
+                                    background: "var(--theme-toggle-bg)",
+                                    color: "var(--theme-toggle-fg)",
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--hover-bg)")}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = "var(--theme-toggle-bg)")}
+                            >
+                                <svg
+                                    className="h-6 w-6 transition-transform duration-200 group-hover:-translate-x-0.5"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="3"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    aria-hidden
+                                >
+                                    <path d="M19 12H5M12 19l-7-7 7-7" />
+                                </svg>
+                            </button>
+                        ) : null}
+                        {pathname !== LANDING_PATH &&
+                        pathname !== "/setari" &&
+                        pathname !== "/login" &&
+                        pathname !== "/intro" &&
+                        !(pathname?.startsWith("/intro/") ?? false) ? (
+                            <GenerationProgressBar inline />
+                        ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+                        <div className="hidden md:contents">
+                            {libraryHeaderReady && isAppHomePath(pathname) && <LibraryNewFolderButton />}
+                            {libraryHeaderReady && isAppHomePath(pathname) && <LibrarySearchByFlyout />}
+                            {libraryHeaderReady && isAppHomePath(pathname) && <LibrarySortFilterFlyout />}
+                        </div>
+                        {libraryHeaderReady && isAppHomePath(pathname) && <LibraryViewModeToggle />}
+                        <LanguageToggle />
                         <ThemeToggle />
                     </div>
                     {/* Meniu cont: guest (login/register) sau utilizator autentificat */}
                     <div className="relative flex items-center gap-0.5 shrink-0" ref={accountMenuRef}>
                         {userRol === "guest" ? (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1 sm:gap-2">
                                 <Link
                                     href="/login"
-                                    className="px-4 py-2 rounded-xl text-sm font-bold transition-colors"
+                                    className="hidden sm:inline-flex px-3 py-2 rounded-xl text-sm font-bold transition-colors lg:px-4"
                                     style={{ color: "var(--text-muted)" }}
                                     onMouseEnter={(e) => {
                                         e.currentTarget.style.color = "var(--text-primary)";
@@ -538,7 +731,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                 </Link>
                                 <Link
                                     href="/login?inregistrare=1"
-                                    className="px-4 py-2 rounded-xl text-sm font-extrabold text-white transition-transform hover:scale-[1.02]"
+                                    className="px-3 py-2 rounded-xl text-xs font-extrabold text-white transition-transform hover:scale-[1.02] sm:px-4 sm:text-sm"
                                     style={{
                                         background: "linear-gradient(135deg, #408A71, #285A48)",
                                         boxShadow: "var(--shadow-btn-sm)",
@@ -667,7 +860,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                         onClick={() => {
                                             setAccountMenuOpen(false);
                                             clearAuthSession();
-                                            router.push("/intro");
+                                            router.push(LANDING_PATH);
                                         }}
                                     >
                                         {t("shell.logout")}

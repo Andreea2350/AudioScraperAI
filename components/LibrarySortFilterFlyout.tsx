@@ -75,19 +75,29 @@ function SortArrowsNeutral({ className }: { className?: string }) {
 
 /* Directia implicita la prima selectie a unui criteriu de sortare. */
 function defaultDirForKey(key: LibrarySortKey): LibrarySortDir {
-    if (key === "data" || key === "dimensiune") return "desc";
+    if (key === "data" || key === "dimensiune" || key === "acces") return "desc";
     return "asc";
+}
+
+function IconClock({ className }: { className?: string }) {
+    return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 8v4.5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+    );
 }
 
 /* Randurile din meniul de sortare: cheie, eticheta i18n si iconita. */
 const SORT_ROWS: {
     sortKey: LibrarySortKey;
-    labelKey: "library.sortRowName" | "library.sortRowSize" | "library.sortRowDate";
+    labelKey: "library.sortRowName" | "library.sortRowSize" | "library.sortRowDate" | "library.sortRowAccess";
     Icon: typeof IconText;
 }[] = [
+    { sortKey: "acces", labelKey: "library.sortRowAccess", Icon: IconClock },
+    { sortKey: "data", labelKey: "library.sortRowDate", Icon: IconCalendar },
     { sortKey: "nume", labelKey: "library.sortRowName", Icon: IconText },
     { sortKey: "dimensiune", labelKey: "library.sortRowSize", Icon: IconRuler },
-    { sortKey: "data", labelKey: "library.sortRowDate", Icon: IconCalendar },
 ];
 
 /* Persista sortarea si emite eveniment pentru restul UI-ului bibliotecii. */
@@ -99,7 +109,7 @@ function applySort(nextKey: LibrarySortKey, nextDir: LibrarySortDir) {
 export function LibrarySortFilterFlyout({ className = "" }: { className?: string }) {
     const { t } = useI18n();
     const [open, setOpen] = useState(false);
-    const [sortKey, setSortKey] = useState<LibrarySortKey>("data");
+    const [sortKey, setSortKey] = useState<LibrarySortKey>("acces");
     const [sortDir, setSortDir] = useState<LibrarySortDir>("desc");
     const wrapRef = useRef<HTMLDivElement>(null);
 

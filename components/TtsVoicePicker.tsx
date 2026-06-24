@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchTtsVoices, ttsPreviewUrl, type TtsVoiceOption } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { showToast } from "@/lib/toast";
 import { DEFAULT_TTS_VOICE } from "@/lib/ttsVoiceStorage";
 
 type Props = {
@@ -94,13 +95,13 @@ export function TtsVoicePicker({ value, onChange, disabled = false, compact = fa
             audio.onended = () => setPreviewingId(null);
             audio.onerror = () => {
                 setPreviewingId(null);
-                alert(t("home.ttsVoicePreviewError"));
+                showToast(t("home.ttsVoicePreviewError"), "error");
             };
             try {
                 await audio.play();
             } catch {
                 setPreviewingId(null);
-                alert(t("home.ttsVoicePreviewError"));
+                showToast(t("home.ttsVoicePreviewError"), "error");
             }
         },
         [disabled, previewingId, t],
@@ -112,9 +113,11 @@ export function TtsVoicePicker({ value, onChange, disabled = false, compact = fa
     };
 
     return (
-        <div ref={rootRef} className={`relative ${compact ? "" : "mt-3 mb-1"}`}>
+        <div ref={rootRef} className={`relative ${compact ? "" : "mb-0"}`}>
             <span
-                className="block text-xs font-extrabold uppercase tracking-widest mb-2"
+                className={`block font-extrabold uppercase tracking-widest mb-2 ${
+                    compact ? "text-[10px]" : "text-xs"
+                }`}
                 style={{ color: "var(--text-muted)" }}
             >
                 {t("home.ttsVoiceLabel")}

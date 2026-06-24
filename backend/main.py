@@ -39,6 +39,7 @@ try:
         MIN_FINAL_MP3_BYTES,
         TtsSegmentResult,
         curata_text_cu_gemini,
+        rezuma_text_cu_gemini,
         synthesize_ro_to_mp3_path,
     )
     from guest_credits import (
@@ -80,6 +81,7 @@ except ModuleNotFoundError:
         MIN_FINAL_MP3_BYTES,
         TtsSegmentResult,
         curata_text_cu_gemini,
+        rezuma_text_cu_gemini,
         synthesize_ro_to_mp3_path,
     )
     from backend.guest_credits import (
@@ -398,17 +400,38 @@ class CerereExtragere(BaseModel):
     def strip_url(cls, v: object) -> object:
         return v.strip() if isinstance(v, str) else v
 
+class CerereExtragereText(BaseModel):
+    """Body pentru /extrage_url_text: doar titlu + text brut, fara generare audio."""
+    url: str = Field(..., min_length=1, max_length=8000)
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def strip_url(cls, v: object) -> object:
+        return v.strip() if isinstance(v, str) else v
+
+
 class TextLiberRequest(BaseModel):
     """Body pentru /genereaza_text: titlu scurt + text oarecat de lung (TTS il sparge intern daca trebuie)."""
     titlu: str = Field(..., min_length=1, max_length=500)
     text: str = Field(..., min_length=1)
     curata_cu_gemini: bool = False
     tts_voice: str | None = None
+    source_label: str | None = None
 
     @field_validator("titlu", "text", mode="before")
     @classmethod
     def strip_spatii(cls, v: object) -> object:
         return v.strip() if isinstance(v, str) else v
+
+    @field_validator("source_label", mode="before")
+    @classmethod
+    def strip_source_label(cls, v: object) -> object | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else None
+        return v
 
 
 # --- Helpers SSE (Server-Sent Events pentru generare in timp real) ---
@@ -835,6 +858,7 @@ async def genereaza_din_text(
             req.titlu,
             req.text,
             curata_cu_gemini=req.curata_cu_gemini,
+            source_label=req.source_label or "Text Adăugat Manual",
             tts_voice=req.tts_voice,
         )
     except HTTPException:
@@ -858,12 +882,34 @@ async def genereaza_din_text_stream(
             req.titlu,
             req.text,
             curata_cu_gemini=req.curata_cu_gemini,
+            source_label=req.source_label or "Text Adăugat Manual",
             tts_voice=req.tts_voice,
             event_queue=event_queue,
             job=job,
         )
 
     return _start_sse_worker(work, user, request)
+
+
+# --- Extragere text din URL (fara generare audio; pentru lista de redare combinata) ---
+@app.post("/extrage_url_text")
+async def extrage_url_text(
+    cerere: CerereExtragereText,
+    user: dict = Depends(get_current_user),
+):
+    try:
+        titlu_pagina, text_brut = _extrage_text_brut_din_url(cerere.url)
+        if not text_brut.strip():
+            raise HTTPException(status_code=422, detail="Nu s-a putut extrage text din URL.")
+        if model is not None:
+            titlu = _titlu_din_text_si_pagina(text_brut, titlu_pagina)
+        else:
+            titlu = titlu_pagina[:300]
+        return {"status": "success", "titlu": titlu, "text": text_brut}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # --- Helpers extragere URL (reutilizati de /extrage/stream) ---
@@ -1238,7 +1284,7 @@ async def get_istoric(user: dict = Depends(get_current_user)):
     try:
         q = get_supabase().table("carti").select("*")
         q = _apply_owner_scope(q, user)
-        response = q.order("creat_la", desc=True).execute()
+        response = q.order("ultima_accesare", desc=True).order("creat_la", desc=True).execute()
 
         return {"status": "success", "data": response.data}
     except HTTPException:
@@ -1250,6 +1296,27 @@ async def get_istoric(user: dict = Depends(get_current_user)):
 
 class CerereRedenumire(BaseModel):
     titlu_nou: str
+
+
+@app.patch("/carti/{carte_id}/acces")
+async def inregistreaza_acces_carte(carte_id: int, user: dict = Depends(get_current_user)):
+    """Actualizează ultima_accesare la deschiderea cărții în bibliotecă."""
+    try:
+        carte = await incarca_cartea_dupa_id(carte_id)
+        assert_poate_edita_cartea(user, carte)
+        acum = datetime.now(timezone.utc).isoformat()
+        get_supabase().table("carti").update({"ultima_accesare": acum}).eq("id", carte_id).execute()
+        return {"status": "success", "ultima_accesare": acum}
+    except HTTPException:
+        raise
+    except Exception as e:
+        msg = str(e).lower()
+        if "ultima_accesare" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail="Coloana ultima_accesare lipsește — rulează migrarea Supabase.",
+            ) from e
+        return {"status": "error", "mesaj": str(e)}
 
 
 @app.put("/redenumeste/{carte_id}")
@@ -1268,6 +1335,27 @@ async def redenumeste_carte(
         raise
     except Exception as e:
         return {"status": "error", "mesaj": str(e)}
+
+
+@app.post("/carti/{carte_id}/rezumat")
+async def genereaza_rezumat_carte(carte_id: int, user: dict = Depends(get_current_user)):
+    """Rezumat AI al textului cărții — nu afectează fișierul audio existent."""
+    if model is None:
+        raise HTTPException(status_code=503, detail="Serviciul AI nu este configurat (GEMINI_API_KEY).")
+    try:
+        carte = await incarca_cartea_dupa_id(carte_id)
+        assert_poate_edita_cartea(user, carte)
+        text = (carte.get("text_curatat") or "").strip()
+        if not text:
+            raise HTTPException(status_code=422, detail="Cartea nu are text pentru rezumat.")
+        rezumat = await asyncio.to_thread(rezuma_text_cu_gemini, model, text)
+        if not rezumat.strip():
+            raise HTTPException(status_code=502, detail="Nu s-a putut genera rezumatul.")
+        return {"status": "success", "rezumat": rezumat.strip()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.delete("/sterge/{carte_id}")

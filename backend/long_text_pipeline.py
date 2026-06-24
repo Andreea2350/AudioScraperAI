@@ -246,6 +246,107 @@ def curata_text_cu_gemini(model, text_brut: str, check_cancel: Callable[[], None
     return "\n\n".join(s for s in results if s)
 
 
+# --- Rezumat text cu Gemini (fara impact pe TTS) ---
+def _prompt_rezumat_fragment(index: int, total: int, fragment: str) -> str:
+    return f"""Rezumă acest fragment ({index} din {total}) dintr-un text lung.
+Scrie 3-6 propoziții cu ideile principale, în aceeași limbă ca textul sursă.
+Fără titluri, fără „Fragmentul {index}”, fără meta-explicații.
+
+---
+{fragment}
+---
+"""
+
+
+def _prompt_rezumat_final(partiale: list[str]) -> str:
+    bullets = "\n".join(f"• {p}" for p in partiale if p.strip())
+    return f"""Uneste aceste rezumate parțiale într-un singur rezumat coerent de 150-250 de cuvinte.
+Păstrează limba originală. Fără titlu — doar 1-3 paragrafe clare.
+
+---
+{bullets}
+---
+"""
+
+
+def _prompt_rezumat_scurt(text: str) -> str:
+    return f"""Rezumă textul de mai jos în 150-250 de cuvinte (sau proporțional dacă e foarte scurt).
+Păstrează ideile principale, în aceeași limbă ca sursa. Fără titlu, fără introduceri.
+
+---
+{text}
+---
+"""
+
+
+def rezuma_text_cu_gemini(
+    model,
+    text: str,
+    check_cancel: Callable[[], None] | None = None,
+) -> str:
+    """Generează rezumat textual; nu modifică pipeline-ul audio."""
+    if check_cancel is not None:
+        check_cancel()
+    if model is None:
+        return ""
+    text = (text or "").strip()
+    if not text:
+        return ""
+
+    if len(text) <= 15000:
+        if check_cancel is not None:
+            check_cancel()
+        r = model.generate_content(_prompt_rezumat_scurt(text[:50000]))
+        out = _gemini_safe_text(r)
+        if check_cancel is not None:
+            check_cancel()
+        return out
+
+    chunks = chunk_text(text, GEMINI_CHUNK_CHARS)
+    if len(chunks) == 1:
+        if check_cancel is not None:
+            check_cancel()
+        r = model.generate_content(_prompt_rezumat_scurt(chunks[0]))
+        out = _gemini_safe_text(r)
+        if check_cancel is not None:
+            check_cancel()
+        return out
+
+    def one(idx: int, frag: str) -> tuple[int, str]:
+        if check_cancel is not None:
+            check_cancel()
+        p = _prompt_rezumat_fragment(idx + 1, len(chunks), frag)
+        try:
+            r = model.generate_content(p)
+            cleaned = _gemini_safe_text(r)
+            return idx, cleaned if cleaned else ""
+        except Exception:
+            return idx, ""
+
+    partials: list[str | None] = [None] * len(chunks)
+    with ThreadPoolExecutor(max_workers=min(GEMINI_WORKERS, len(chunks))) as ex:
+        futs = [ex.submit(one, i, c) for i, c in enumerate(chunks)]
+        for f in as_completed(futs):
+            if check_cancel is not None:
+                check_cancel()
+            i, s = f.result()
+            partials[i] = s
+
+    partiale_ok = [s for s in partials if s]
+    if not partiale_ok:
+        return ""
+    if len(partiale_ok) == 1:
+        return partiale_ok[0]
+
+    if check_cancel is not None:
+        check_cancel()
+    r = model.generate_content(_prompt_rezumat_final(partiale_ok))
+    out = _gemini_safe_text(r)
+    if check_cancel is not None:
+        check_cancel()
+    return out if out else "\n\n".join(partiale_ok)
+
+
 # --- Sanitizare text si fragmentare pentru motorul TTS ---
 def sanitize_text_pentru_tts(text: str) -> str:
     """Inlatura caractere de control (in afara de newline/tab) si NUL ca motorul TTS sa nu crape."""

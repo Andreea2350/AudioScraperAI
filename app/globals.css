@@ -32,108 +32,135 @@
  */
 :root {
   color-scheme: light;
-  --page-bg: #f4f1ea;
+  --page-bg: #f9ece2;
   --color-surface: var(--page-bg);
-  --color-surface-green: #e2ebe6;
-  --card-bg: #fffef9;
-  --card-bg-muted: #f2efe6;
-  --header-bar-bg: #ebe6dc;
-  --text-primary: #1a2630;
-  --text-body: #3a4a52;
-  --text-muted: #5d6e78;
-  --text-faint: #7a8c95;
-  --heading-on-surface: #2a5a4a;
-  --link-accent: #2d6d8c;
-  --border-subtle: rgba(26, 38, 48, 0.08);
-  --border-card: rgba(26, 38, 48, 0.11);
-  --divider: rgba(26, 38, 48, 0.1);
-  --input-border: #c5ccd4;
-  --input-bg: #faf8f3;
-  --input-bg-focus: #fffef9;
-  --hover-bg: #ebe8e0;
-  --hover-bg-strong: #e0dcd2;
-  --overlay-scrim: rgba(22, 26, 30, 0.45);
-  --player-well-a: #e2ebe8;
-  --player-well-b: #f0ece4;
-  --text-block-bg: #f5f2eb;
-  --dropdown-border: rgba(26, 38, 48, 0.09);
-  --modal-header-from: #f2efe6;
-  --modal-header-to: #fffef9;
-  --focus-ring: 0 0 0 4px rgba(45, 109, 140, 0.18);
-  --shadow-card-lg: 0 4px 28px rgba(26, 38, 48, 0.07), 0 1px 4px rgba(26, 38, 48, 0.04);
-  --shadow-card-sm: 0 2px 12px rgba(26, 38, 48, 0.06), 0 1px 3px rgba(26, 38, 48, 0.035);
-  --shadow-card-hover: 0 12px 36px rgba(42, 90, 74, 0.12), 0 2px 8px rgba(45, 109, 140, 0.08);
-  --shadow-modal: 0 24px 64px rgba(26, 38, 48, 0.14), 0 4px 16px rgba(26, 38, 48, 0.06);
-  --shadow-dropdown: 0 10px 32px rgba(26, 38, 48, 0.1), 0 2px 8px rgba(26, 38, 48, 0.05);
-  --shadow-player-inset: inset 0 2px 14px rgba(26, 38, 48, 0.06);
-  --shadow-header-bar: 0 1px 0 var(--border-subtle), 0 2px 10px rgba(26, 38, 48, 0.05);
-  --shadow-intro-header: 0 4px 22px rgba(26, 38, 48, 0.12);
-  --shadow-toast: 0 8px 32px rgba(26, 38, 48, 0.18), 0 0 0 1px rgba(42, 90, 74, 0.12);
-  --shadow-btn-primary: 0 4px 18px rgba(42, 90, 74, 0.28);
-  --shadow-btn-primary-hover: 0 6px 26px rgba(42, 90, 74, 0.38);
-  --shadow-btn-sm: 0 3px 14px rgba(42, 90, 74, 0.26);
-  --shadow-btn-sm-hover: 0 5px 22px rgba(45, 109, 140, 0.22);
-  --shadow-btn-destructive: 0 4px 16px rgba(26, 38, 48, 0.15);
-  --shadow-btn-destructive-hover: 0 6px 24px rgba(42, 90, 74, 0.28);
+  --color-surface-green: #e8ebdd;
+  --card-bg: #fffaf4;
+  --card-bg-muted: #f6e7db;
+  --header-bar-bg: #f3e2d4;
+  --text-primary: #2c2520;
+  --text-body: #534639;
+  --text-muted: #7c6c5a;
+  --text-faint: #9e8d78;
+  --heading-on-surface: #2f6150;
+  --link-accent: #b86530;
+  --border-subtle: rgba(120, 70, 45, 0.09);
+  --border-card: rgba(120, 70, 45, 0.14);
+  --divider: rgba(120, 70, 45, 0.11);
+  --input-border: #e0cdb8;
+  --input-bg: #fdf3ea;
+  --input-bg-focus: #fffaf4;
+  --hover-bg: #f3e5d7;
+  --hover-bg-strong: #ecd9c8;
+  --overlay-scrim: rgba(45, 28, 20, 0.45);
+  --player-well-a: #f1e0d2;
+  --player-well-b: #f9ebdd;
+  --text-block-bg: #f8eae0;
+  --dropdown-border: rgba(120, 70, 45, 0.11);
+  --modal-header-from: #f6e7db;
+  --modal-header-to: #fffaf4;
+  --focus-ring: 0 0 0 4px rgba(184, 101, 48, 0.2);
+  --shadow-card-lg: 0 4px 28px rgba(120, 72, 45, 0.1), 0 1px 4px rgba(120, 72, 45, 0.06);
+  --shadow-card-sm: 0 2px 12px rgba(120, 72, 45, 0.08), 0 1px 3px rgba(120, 72, 45, 0.05);
+  --shadow-card-hover: 0 12px 36px rgba(47, 97, 80, 0.15), 0 2px 8px rgba(184, 101, 48, 0.12);
+  --shadow-modal: 0 24px 64px rgba(80, 46, 28, 0.18), 0 4px 16px rgba(80, 46, 28, 0.08);
+  --shadow-dropdown: 0 10px 32px rgba(80, 46, 28, 0.13), 0 2px 8px rgba(80, 46, 28, 0.07);
+  --shadow-player-inset: inset 0 2px 14px rgba(120, 72, 45, 0.08);
+  --shadow-header-bar: 0 1px 0 var(--border-subtle), 0 2px 10px rgba(120, 72, 45, 0.07);
+  --shadow-intro-header: 0 4px 22px rgba(80, 46, 28, 0.15);
+  --shadow-toast: 0 8px 32px rgba(80, 46, 28, 0.2), 0 0 0 1px rgba(47, 97, 80, 0.14);
+  --shadow-btn-primary: 0 4px 18px rgba(47, 97, 80, 0.3);
+  --shadow-btn-primary-hover: 0 6px 26px rgba(47, 97, 80, 0.4);
+  --shadow-btn-sm: 0 3px 14px rgba(47, 97, 80, 0.28);
+  --shadow-btn-sm-hover: 0 5px 22px rgba(184, 101, 48, 0.26);
+  --shadow-btn-destructive: 0 4px 16px rgba(80, 46, 28, 0.16);
+  --shadow-btn-destructive-hover: 0 6px 24px rgba(47, 97, 80, 0.28);
   --toggle-bg: rgba(255, 255, 255, 0.2);
   --toggle-border: rgba(176, 228, 204, 0.35);
   --toggle-icon: #ffffff;
-  --theme-toggle-bg: #e8e4db;
-  --theme-toggle-border: rgba(26, 38, 48, 0.14);
-  --theme-toggle-fg: #2a5a4a;
+  --theme-toggle-bg: #f0e1d3;
+  --theme-toggle-border: rgba(120, 70, 45, 0.16);
+  --theme-toggle-fg: #2f6150;
+  --sidebar-from: #1a3d2f;
+  --sidebar-via: #285a48;
+  --sidebar-to: #2d6652;
+  --sidebar-shadow: 4px 0 24px rgba(9, 20, 19, 0.18), inset -1px 0 0 rgba(176, 228, 204, 0.08);
+  --sidebar-divider: rgba(176, 228, 204, 0.14);
+  --sidebar-section: rgba(238, 228, 212, 0.62);
+  --sidebar-brand-accent: #edbe79;
+
+  /* Text pe cardul Premium (landing) — contrast pe fundal auriu */
+  --premium-accent: #9a6318;
+  --premium-accent-strong: #6b4410;
+  --premium-cta-bg: rgba(107, 68, 16, 0.1);
+  --premium-cta-border: rgba(90, 55, 12, 0.55);
+  --premium-cta-text: #4a2e08;
 }
 
 html.dark {
   color-scheme: dark;
-  --page-bg: #0f1418;
+  --page-bg: #0f1410;
   --color-surface: var(--page-bg);
-  --color-surface-green: #1a252e;
-  --card-bg: #182026;
-  --card-bg-muted: #1e2a32;
-  --header-bar-bg: #141b21;
-  --text-primary: #eef1f3;
-  --text-body: #b8c5cc;
-  --text-muted: #8a9aa8;
-  --text-faint: #6b7d8c;
-  --heading-on-surface: #9dd4be;
-  --link-accent: #7eb8d4;
-  --border-subtle: rgba(126, 184, 212, 0.1);
-  --border-card: rgba(157, 212, 190, 0.2);
-  --divider: rgba(138, 154, 168, 0.22);
-  --input-border: rgba(126, 184, 212, 0.38);
-  --input-bg: #151d24;
-  --input-bg-focus: #1c262f;
-  --hover-bg: #222d36;
-  --hover-bg-strong: #2a3640;
-  --overlay-scrim: rgba(4, 8, 12, 0.82);
-  --player-well-a: #1a252d;
-  --player-well-b: #12171d;
-  --text-block-bg: #151c22;
-  --dropdown-border: rgba(126, 184, 212, 0.14);
-  --modal-header-from: #1c262f;
-  --modal-header-to: #182026;
-  --focus-ring: 0 0 0 4px rgba(126, 184, 212, 0.3);
-  --shadow-card-lg: 0 12px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(126, 184, 212, 0.09);
-  --shadow-card-sm: 0 4px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(126, 184, 212, 0.07);
-  --shadow-card-hover: 0 16px 44px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(157, 212, 190, 0.18);
-  --shadow-modal: 0 28px 80px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(126, 184, 212, 0.11);
-  --shadow-dropdown: 0 16px 48px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(126, 184, 212, 0.09);
+  --color-surface-green: #161e17;
+  --card-bg: #18211a;
+  --card-bg-muted: #1f2921;
+  --header-bar-bg: #101711;
+  --text-primary: #eef2ea;
+  --text-body: #c2cabb;
+  --text-muted: #8f9889;
+  --text-faint: #6d766a;
+  --heading-on-surface: #9fd6b9;
+  --link-accent: #e6b277;
+  --border-subtle: rgba(176, 214, 185, 0.08);
+  --border-card: rgba(176, 214, 185, 0.15);
+  --divider: rgba(176, 214, 185, 0.14);
+  --input-border: rgba(176, 214, 185, 0.24);
+  --input-bg: #131a14;
+  --input-bg-focus: #1d261e;
+  --hover-bg: #1f2921;
+  --hover-bg-strong: #28332a;
+  --overlay-scrim: rgba(5, 9, 6, 0.84);
+  --player-well-a: #1a221b;
+  --player-well-b: #11170f;
+  --text-block-bg: #151c16;
+  --dropdown-border: rgba(176, 214, 185, 0.12);
+  --modal-header-from: #1f2921;
+  --modal-header-to: #18211a;
+  --focus-ring: 0 0 0 4px rgba(230, 178, 119, 0.28);
+  --shadow-card-lg: 0 12px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(176, 214, 185, 0.09);
+  --shadow-card-sm: 0 4px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(176, 214, 185, 0.07);
+  --shadow-card-hover: 0 16px 44px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(168, 216, 191, 0.22);
+  --shadow-modal: 0 28px 80px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(176, 214, 185, 0.11);
+  --shadow-dropdown: 0 16px 48px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(176, 214, 185, 0.09);
   --shadow-player-inset: inset 0 2px 22px rgba(0, 0, 0, 0.4);
   --shadow-header-bar: 0 1px 0 var(--border-subtle), 0 4px 24px rgba(0, 0, 0, 0.38);
   --shadow-intro-header: 0 6px 28px rgba(0, 0, 0, 0.52);
-  --shadow-toast: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(157, 212, 190, 0.2);
-  --shadow-btn-primary: 0 6px 24px rgba(0, 0, 0, 0.45), 0 0 22px rgba(126, 184, 212, 0.2);
-  --shadow-btn-primary-hover: 0 8px 32px rgba(0, 0, 0, 0.52), 0 0 30px rgba(157, 212, 190, 0.25);
-  --shadow-btn-sm: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 18px rgba(126, 184, 212, 0.15);
-  --shadow-btn-sm-hover: 0 6px 28px rgba(0, 0, 0, 0.48), 0 0 24px rgba(126, 184, 212, 0.22);
+  --shadow-toast: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(168, 216, 191, 0.2);
+  --shadow-btn-primary: 0 6px 24px rgba(0, 0, 0, 0.45), 0 0 22px rgba(224, 171, 107, 0.2);
+  --shadow-btn-primary-hover: 0 8px 32px rgba(0, 0, 0, 0.52), 0 0 30px rgba(168, 216, 191, 0.25);
+  --shadow-btn-sm: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 18px rgba(224, 171, 107, 0.15);
+  --shadow-btn-sm-hover: 0 6px 28px rgba(0, 0, 0, 0.48), 0 0 24px rgba(224, 171, 107, 0.22);
   --shadow-btn-destructive: 0 6px 24px rgba(0, 0, 0, 0.45);
-  --shadow-btn-destructive-hover: 0 8px 32px rgba(0, 0, 0, 0.52), 0 0 22px rgba(126, 184, 212, 0.18);
+  --shadow-btn-destructive-hover: 0 8px 32px rgba(0, 0, 0, 0.52), 0 0 22px rgba(224, 171, 107, 0.18);
   --toggle-bg: rgba(255, 255, 255, 0.08);
   --toggle-border: rgba(176, 228, 204, 0.28);
   --toggle-icon: #b0e4cc;
-  --theme-toggle-bg: #1e2a32;
-  --theme-toggle-border: rgba(126, 184, 212, 0.24);
-  --theme-toggle-fg: #9dd4be;
+  --theme-toggle-bg: #1d261e;
+  --theme-toggle-border: rgba(176, 214, 185, 0.2);
+  --theme-toggle-fg: #9fd6b9;
+  --sidebar-from: #0e1b15;
+  --sidebar-via: #15281f;
+  --sidebar-to: #193325;
+  --sidebar-shadow: 4px 0 28px rgba(0, 0, 0, 0.45), inset -1px 0 0 rgba(176, 228, 204, 0.05);
+  --sidebar-divider: rgba(176, 228, 204, 0.1);
+  --sidebar-section: rgba(231, 222, 205, 0.5);
+  --sidebar-brand-accent: #e6b277;
+
+  --premium-accent: #e6b277;
+  --premium-accent-strong: #f0cc7a;
+  --premium-cta-bg: rgba(196, 147, 63, 0.18);
+  --premium-cta-border: rgba(230, 178, 119, 0.5);
+  --premium-cta-text: #f5e0b8;
 
   --color-amber-light: rgba(196, 147, 63, 0.2);
   --color-ocean-light: rgba(126, 184, 212, 0.18);
@@ -203,8 +230,97 @@ body {
   box-shadow: 0 0 20px 4px rgba(196, 147, 63, 0.4);
 }
 
+/* Card Premium — landing pricing */
+.pricing-card-premium {
+  position: relative;
+  overflow: visible;
+  border: 2px solid #c4933f !important;
+  background: linear-gradient(155deg, #f5e4c0 0%, #fff3dc 38%, #fffaf4 100%);
+  box-shadow:
+    0 10px 36px rgba(196, 147, 63, 0.28),
+    0 0 0 1px rgba(196, 147, 63, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.pricing-card-premium::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(255, 220, 140, 0.35) 0%, transparent 55%);
+}
+
+.pricing-badge-premium,
+.pricing-card-badge {
+  position: relative;
+  z-index: 20;
+}
+
+html.dark .pricing-card-premium {
+  border-color: #e6b277 !important;
+  background: linear-gradient(
+    155deg,
+    rgba(196, 147, 63, 0.28) 0%,
+    rgba(45, 36, 18, 0.92) 42%,
+    #18211a 100%
+  );
+  box-shadow:
+    0 14px 44px rgba(0, 0, 0, 0.55),
+    0 0 28px rgba(230, 178, 119, 0.18),
+    inset 0 1px 0 rgba(255, 220, 160, 0.12);
+}
+
+html.dark .pricing-card-premium::before {
+  background: linear-gradient(135deg, rgba(230, 178, 119, 0.2) 0%, transparent 55%);
+}
+
+.pricing-badge-premium {
+  background: linear-gradient(135deg, #e8b85a, #c4933f);
+  color: #2c1a08;
+  box-shadow: 0 4px 14px rgba(196, 147, 63, 0.45);
+}
+
+html.dark .pricing-badge-premium {
+  background: linear-gradient(135deg, #f0cc7a, #c4933f);
+  color: #1a1208;
+}
+
+.pricing-premium-price {
+  color: var(--premium-accent-strong);
+}
+
+.pricing-premium-star {
+  color: var(--premium-accent);
+}
+
+.pricing-premium-soon {
+  background: var(--premium-cta-bg);
+  color: var(--premium-cta-text);
+  border: 1.5px dashed var(--premium-cta-border);
+  font-weight: 700;
+}
+
+.pricing-premium-check {
+  color: var(--premium-accent);
+}
+
 .glow-ocean {
   box-shadow: 0 0 20px 4px rgba(58, 143, 181, 0.4);
+}
+
+/* Font Lexend + spațiere mărită pentru text de citit (rezumat, text extras). */
+.reading-accessible {
+  font-family: var(--font-lexend), system-ui, sans-serif;
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  letter-spacing: 0.03em;
+  word-spacing: 0.08em;
+  white-space: pre-wrap;
+  color: var(--text-body);
+  max-width: 42rem;
 }
 
 ::-webkit-scrollbar {
@@ -214,15 +330,15 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(45, 109, 140, 0.22);
+  background: rgba(176, 106, 48, 0.26);
   border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(45, 109, 140, 0.42);
+  background: rgba(176, 106, 48, 0.46);
 }
 html.dark ::-webkit-scrollbar-thumb {
-  background: rgba(126, 184, 212, 0.22);
+  background: rgba(230, 178, 119, 0.22);
 }
 html.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(126, 184, 212, 0.4);
+  background: rgba(230, 178, 119, 0.4);
 }
