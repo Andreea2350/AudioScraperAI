@@ -9,11 +9,13 @@ type Props = {
     className?: string;
 };
 
-/** Comutator font Lexend pentru blocurile de text de citit. */
+/** Comutatorul fontului prietenos la citit (Lexend). Are doua infatisari: un buton mic "Aa" sau un rand cu eticheta in Setari. */
 export function ReadingFontToggle({ variant = "compact", className = "" }: Props) {
     const { t } = useI18n();
+    // enabled = e pornit fontul?; setEnabled/toggle vin din hook-ul care salveaza preferinta in localStorage.
     const { enabled, setEnabled, toggle } = useReadingFont();
 
+    // Varianta "settings": un checkbox mare cu titlu si explicatie, pentru pagina de setari.
     if (variant === "settings") {
         return (
             <label
@@ -47,6 +49,7 @@ export function ReadingFontToggle({ variant = "compact", className = "" }: Props
         );
     }
 
+    // Varianta "compact" (implicita): un simplu buton "Aa" care comuta fontul la click.
     return (
         <button
             type="button"

@@ -29,20 +29,24 @@ export const viewport = {
 };
 
 /**
- * Script inline rulat inainte de hidratare: aplica tema dark/light si seteaza
- * atributul lang pe <html> din localStorage.
+ * Script care ruleaza inainte ca React sa "hidrateze" pagina. Rolul lui e sa aplice tema (dark/light)
+ * si limba pe elementul <html> CHIAR de la primul randare, ca sa nu apara o palpaire alba inainte sa porneasca React.
+ * E scris ca string si injectat in <head>, deci nu poate folosi importurile mele - de aia citeste direct din localStorage.
  */
 const themeInit = `
 (function(){
   try {
+    // Citesc tema salvata; daca utilizatorul n-a ales nimic, ma iau dupa setarea sistemului de operare.
     var k = ${JSON.stringify(THEME_STORAGE_KEY)};
     var t = localStorage.getItem(k);
     var dark = false;
     if (t === 'dark') dark = true;
     else if (t === 'light') dark = false;
     else dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    // Pun sau scot clasa "dark" pe <html>; restul stilurilor se bazeaza pe ea.
     if (dark) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
+    // Setez si limba pe <html lang="..."> dupa ce e salvat in localStorage (implicit romana).
     var lk = ${JSON.stringify(LANG_STORAGE_KEY)};
     var lang = localStorage.getItem(lk);
     document.documentElement.lang = lang === 'en' ? 'en' : 'ro';

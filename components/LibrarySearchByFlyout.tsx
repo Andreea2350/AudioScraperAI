@@ -28,14 +28,16 @@ function pushNameFilter(nameFilter: string) {
 
 export function LibrarySearchByFlyout({ className = "" }: { className?: string }) {
     const { t } = useI18n();
-    const [open, setOpen] = useState(false);
-    const [draftName, setDraftName] = useState("");
-    const wrapRef = useRef<HTMLDivElement>(null);
+    const [open, setOpen] = useState(false);       // e deschis panoul de cautare?
+    const [draftName, setDraftName] = useState(""); // textul scris in caseta de cautare
+    const wrapRef = useRef<HTMLDivElement>(null);   // radacina (pt. click-in-afara)
 
+    // Iau filtrul de nume salvat in localStorage si il pun in caseta.
     const syncFromStorage = useCallback(() => {
         setDraftName(loadLibraryUi().nameFilter ?? "");
     }, []);
 
+    // La montare incarc filtrul curent.
     useEffect(() => {
         syncFromStorage();
     }, [syncFromStorage]);
@@ -139,6 +141,7 @@ export function LibrarySearchByFlyout({ className = "" }: { className?: string }
                                 type="search"
                                 value={draftName}
                                 onChange={(e) => {
+                                    // Filtrare "live": la fiecare tasta, actualizez caseta si trimit filtrul catre restul UI-ului.
                                     const v = e.target.value;
                                     setDraftName(v);
                                     pushNameFilter(v);

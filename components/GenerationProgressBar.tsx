@@ -20,25 +20,31 @@ export function GenerationProgressBar({ inline = false }: Props) {
     const { t } = useI18n();
     const router = useRouter();
     const pathname = usePathname();
-    const job = useGenerationJob();
+    const job = useGenerationJob();  // ma abonez la jobul global de generare
 
+    // Daca nu ruleaza nimic (sau nu e varianta inline din header), nu afisez bara deloc.
     if (!job.busy || !inline) return null;
 
+    // Pot deschide ecranul de progres doar daca jobul e de tip stream si stiu de unde a pornit.
     const canOpenProgress = job.kind === "stream" && job.streamOrigin != null;
 
+    // Calculez procentul si textul de status in functie de tipul jobului si de faza in care e.
     const isBatch = job.kind === "playlist-separate" || job.kind === "playlist-combined";
     let progressPct = 0;
     let statusText = job.label;
 
     if (isBatch && job.batchTotal > 0) {
+        // La un lot din lista de redare, procentul e cate carti am terminat din total.
         progressPct = Math.round((job.batchCurrent / job.batchTotal) * 100);
         statusText = t("gen.progressBatch")
             .replace("{current}", String(job.batchCurrent))
             .replace("{total}", String(job.batchTotal));
     } else if (job.segmentsTotal && job.segmentsTotal > 0) {
+        // La o singura carte, procentul e cate segmente audio sunt gata din total.
         progressPct = Math.round((job.segments.length / job.segmentsTotal) * 100);
         statusText = `${progressPct}%`;
     } else if (job.phase === "extracting") {
+        // Inainte sa stiu numarul de segmente, arat procente fixe orientative pentru fiecare faza.
         progressPct = 15;
         statusText = t("gen.phaseExtracting");
     } else if (job.phase === "cleaning") {
@@ -57,12 +63,14 @@ export function GenerationProgressBar({ inline = false }: Props) {
         statusText = t("gen.generating");
     }
 
+    // La click pe bara: ma duc pe pagina principala (daca nu sunt deja) si cer redeschiderea ecranului de progres.
     const onOpenProgress = () => {
         if (!canOpenProgress) return;
         if (pathname !== APP_HOME_PATH) router.push(APP_HOME_PATH);
         requestGenerationProgressView();
     };
 
+    // La click pe X: cer confirmare si apoi opresc generarea.
     const onCancel = async () => {
         const ok = await confirmDialog({
             message: t("gen.cancelConfirm"),

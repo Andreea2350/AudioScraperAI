@@ -10,6 +10,7 @@ import os
 import sys
 from dotenv import load_dotenv
 
+# Incarc variabilele din .env inainte sa import bcrypt/supabase (au nevoie de chei la initializare).
 load_dotenv()
 
 import bcrypt as bcrypt_lib
@@ -18,10 +19,12 @@ from supabase import create_client
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# Fara chei nu am ce face; ies cu cod de eroare ca scriptul sa nu para ca a reusit.
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("EROARE: SUPABASE_URL sau SUPABASE_KEY lipsesc din .env")
     sys.exit(1)
 
+# Clientul Supabase folosit de tot scriptul.
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Lista hardcodata doar pentru mediu de test; in productie schimb parolele sau sterg scriptul
@@ -68,12 +71,13 @@ def verifica_tabel():
 
 
 def creeaza_utilizatori():
-    """Inserez conturile demo daca nu exista deja."""
-    creat = 0
-    sarit = 0
+    """Inserez conturile demo daca nu exista deja (idempotent: pot rula scriptul de mai multe ori)."""
+    creat = 0  # cate conturi am creat efectiv
+    sarit = 0  # cate existau deja si le-am sarit
 
     for u in UTILIZATORI:
         try:
+            # Verific intai daca emailul exista deja, ca sa nu duplic conturile.
             existent = (
                 supabase.table("utilizatori")
                 .select("id")
@@ -85,6 +89,7 @@ def creeaza_utilizatori():
                 sarit += 1
                 continue
 
+            # Hash-uiesc parola demo inainte de insert (niciodata nu salvez parola in clar).
             parola_hash = bcrypt_lib.hashpw(u["parola"].encode("utf-8"), bcrypt_lib.gensalt()).decode("utf-8")
             supabase.table("utilizatori").insert({
                 "email":       u["email"],

@@ -11,12 +11,13 @@ type Props = {
 
 const LOCALES: Locale[] = ["ro", "en"];
 
-/** Selector limbă RO/EN — meniu dropdown. */
+/** Selectorul de limba RO/EN, afisat ca un dropdown mic. */
 export function LanguageToggle({ onBrandBar, className = "" }: Props) {
     const { locale, setLocale, t } = useI18n();
-    const [open, setOpen] = useState(false);
-    const rootRef = useRef<HTMLDivElement>(null);
+    const [open, setOpen] = useState(false);  // e deschis dropdown-ul?
+    const rootRef = useRef<HTMLDivElement>(null);  // radacina (pt. click-in-afara)
 
+    // Cat timp e deschis, inchid dropdown-ul la click in afara sau la Escape.
     useEffect(() => {
         if (!open) return;
         const inchide = (e: MouseEvent) => {
@@ -33,8 +34,9 @@ export function LanguageToggle({ onBrandBar, className = "" }: Props) {
         };
     }, [open]);
 
-    const shortLabel = locale === "ro" ? "RO" : "EN";
+    const shortLabel = locale === "ro" ? "RO" : "EN";  // eticheta scurta afisata pe buton
 
+    // La alegerea unei limbi: o setez (se salveaza in localStorage prin hook) si inchid dropdown-ul.
     const pick = (l: Locale) => {
         setLocale(l);
         setOpen(false);

@@ -1,19 +1,23 @@
 "use client";
 
 /**
- * Sistem i18n: dictionare RO/EN, localStorage, hook useI18n pentru toata aplicatia.
- * Textele UI (messagesRo/messagesEn) pastreaza diacriticele — sunt pentru utilizator.
+ * Aici tin tot ce tine de limba interfetei (internationalizarea). Am doua dictionare uriase
+ * (romana si engleza) unde fiecare cheie de tip "login.back" mapeaza la textul afisat. Limba aleasa
+ * o salvez in localStorage, iar hook-ul useI18n imi da functia t() cu care traduc oriunde in aplicatie.
+ * Textele pastreaza diacriticele pentru ca sunt pentru utilizator, nu cod.
  */
 import { useCallback, useSyncExternalStore } from "react";
 import { LANG_STORAGE_KEY } from "@/lib/localeConstants";
 
+// Limbile suportate.
 export type Locale = "ro" | "en";
 
 export { LANG_STORAGE_KEY };
 
+// Numele evenimentului prin care anunt componentele ca s-a schimbat limba.
 const LOCALE_EVENT = "audiobooks-locale-change";
 
-/** Dictionar romanesc: fiecare cheie exista si in messagesEn. */
+/** Dictionarul romanesc. E "sursa de adevar": fiecare cheie de aici trebuie sa existe si in messagesEn. */
 export const messagesRo = {
     "login.back": "Înapoi",
     "login.loading": "Se încarcă…",
@@ -416,8 +420,11 @@ export const messagesRo = {
     "common.no": "Nu",
 } as const;
 
+// MessageKey = toate cheile valide de traducere. Astfel, daca scriu o cheie gresita in t("..."),
+// TypeScript ma avertizeaza, si sunt obligat sa am aceeasi cheie in ambele dictionare.
 export type MessageKey = keyof typeof messagesRo;
 
+// Dictionarul englez: aceleasi chei ca la romana, dar cu textele traduse.
 export const messagesEn: Record<MessageKey, string> = {
     "login.back": "Back",
     "login.loading": "Loading…",
@@ -819,8 +826,9 @@ export const messagesEn: Record<MessageKey, string> = {
     "common.no": "No",
 };
 
-/** Returnez textul tradus pentru cheia data si limba curenta. */
+/** Intorc textul tradus pentru o cheie, in limba curenta. */
 export function translate(locale: Locale, key: MessageKey): string {
+    // Aleg dictionarul potrivit; daca lipseste cheia in engleza, cad pe romana, iar in ultima instanta arat chiar cheia.
     const table = locale === "en" ? messagesEn : messagesRo;
     return table[key] ?? messagesRo[key] ?? key;
 }
@@ -867,10 +875,12 @@ export function useLocale(): Locale {
     return useSyncExternalStore(subscribeLocale, getStoredLocale, () => "ro");
 }
 
-/** Hook principal i18n: locale, setLocale si functia t() pentru traduceri. */
+/** Hook-ul principal i18n, pe care il folosesc in componente: imi da limba, functia de schimbare si t(). */
 export function useI18n() {
     const locale = useLocale();
+    // setLocale schimba limba (memoizat ca sa nu se recreeze la fiecare randare).
     const setLocale = useCallback((l: Locale) => setStoredLocale(l), []);
+    // t(cheie) intoarce textul tradus in limba curenta; se reface doar cand se schimba limba.
     const t = useCallback((key: MessageKey) => translate(locale, key), [locale]);
     return { locale, setLocale, t };
 }

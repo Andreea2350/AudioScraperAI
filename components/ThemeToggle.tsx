@@ -21,20 +21,23 @@ export function ThemeToggle({
     onBrandBar?: boolean;
 }) {
     const { t } = useI18n();
+    // "preference" = ce a ales userul (light/dark/system); "effective" = ce se vede efectiv pe ecran (light sau dark).
     const [preference, setPreference] = useState<ThemePreference>("system");
     const [effective, setEffective] = useState<"light" | "dark">("light");
 
+    // Citesc preferinta salvata si tema aplicata acum pe pagina, ca butonul sa arate iconita potrivita.
     const syncFromStorage = useCallback(() => {
         const pref = readStoredThemePreference();
         setPreference(pref);
         setEffective(readDomTheme());
     }, []);
 
+    // La montare ma sincronizez cu ce e salvat.
     useEffect(() => {
         syncFromStorage();
     }, [syncFromStorage]);
 
-    /** Reaplica tema system cand utilizatorul schimba preferintele OS. */
+    /** Daca sunt pe modul "system" si userul schimba tema din setarile sistemului de operare, reaplic ca sa se potriveasca. */
     useEffect(() => {
         const mq = window.matchMedia("(prefers-color-scheme: dark)");
         const onChange = () => {
@@ -46,6 +49,7 @@ export function ThemeToggle({
         return () => mq.removeEventListener("change", onChange);
     }, []);
 
+    // La click: trec ciclic la urmatoarea preferinta (light -> dark -> system -> light...) si o aplic imediat.
     const cycle = useCallback(() => {
         const next = nextThemePreference(readStoredThemePreference());
         applyTheme(next);

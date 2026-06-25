@@ -6,26 +6,30 @@ import { playLandingPreview, stopLandingPreview, subscribeLandingPreviewStop } f
 import { useI18n } from "@/lib/i18n";
 import { showToast } from "@/lib/toast";
 
+// Filtrul de voci de pe landing: toate, doar romanesti sau doar englezesti.
 type VoiceFilter = "all" | "ro" | "en";
 
+// Verific daca o voce se potriveste cu filtrul ales (dupa limba demo-ului).
 function voiceMatchesFilter(voice: TtsVoiceOption, filter: VoiceFilter): boolean {
     if (filter === "all") return true;
     const demo = voice.demo_locale ?? (voice.id.startsWith("en-") ? "en" : "ro");
     return demo === filter;
 }
 
-/** Grid de voci TTS cu preview audio — pentru landing. */
+/** Grila de voci de pe pagina de prezentare, fiecare cu buton de preview audio. */
 export function VoiceShowcaseGrid() {
     const { t, locale } = useI18n();
-    const [voices, setVoices] = useState<TtsVoiceOption[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [filter, setFilter] = useState<VoiceFilter>("all");
-    const [previewingId, setPreviewingId] = useState<string | null>(null);
+    const [voices, setVoices] = useState<TtsVoiceOption[]>([]);  // vocile aduse de la server
+    const [loading, setLoading] = useState(true);                // se incarca lista?
+    const [filter, setFilter] = useState<VoiceFilter>("all");    // filtrul activ
+    const [previewingId, setPreviewingId] = useState<string | null>(null);  // ce voce se asculta acum
 
+    // Daca alt preview porneste (ex. demo-ul principal), playerul comun ma anunta sa ma "dezactivez".
     useEffect(() => {
         return subscribeLandingPreviewStop(() => setPreviewingId(null));
     }, []);
 
+    // Reincarc vocile cand se schimba limba interfetei.
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
@@ -39,22 +43,26 @@ export function VoiceShowcaseGrid() {
         };
     }, [locale]);
 
+    // Vocile afisate dupa aplicarea filtrului curent.
     const filtered = useMemo(
         () => voices.filter((v) => voiceMatchesFilter(v, filter)),
         [voices, filter],
     );
 
+    // Pornesc/opresc preview-ul unei voci (folosesc playerul comun ca sa cante un singur demo o data).
     const togglePreview = useCallback(
         async (voice: TtsVoiceOption) => {
             const voiceId = voice.id;
             const demoLocale = voice.demo_locale ?? (voiceId.startsWith("en-") ? "en" : "ro");
 
+            // Daca aceasta voce canta deja, butonul devine "stop".
             if (previewingId === voiceId) {
                 stopLandingPreview();
                 setPreviewingId(null);
                 return;
             }
 
+            // Altfel pornesc demo-ul; marchez "playing" doar daca a inceput, iar la eroare arat un toast.
             const ok = await playLandingPreview(ttsPreviewUrl(voiceId, demoLocale));
             setPreviewingId(ok ? voiceId : null);
             if (!ok) showToast(t("home.ttsVoicePreviewError"), "error");

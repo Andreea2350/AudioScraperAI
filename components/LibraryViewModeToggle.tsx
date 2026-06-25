@@ -31,7 +31,7 @@ function ListIcon() {
  */
 export function LibraryViewModeToggle({ className = "" }: { className?: string }) {
     const { t } = useI18n();
-    const [viewMode, setViewMode] = useState<LibraryViewMode>("grid");
+    const [viewMode, setViewMode] = useState<LibraryViewMode>("grid");  // modul curent: grid sau list
 
     /* Citeste modul salvat la montare. */
     useEffect(() => {

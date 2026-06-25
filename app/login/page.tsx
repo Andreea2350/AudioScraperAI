@@ -73,17 +73,17 @@ function LoginPageContent() {
     const { t } = useI18n();
     const searchParams = useSearchParams();
 
-    /* --- Stare: formular login, inregistrare, rol --- */
-    const [role, setRole] = useState<UserRole>("user");
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [showPassword, setShowPassword] = useState(false);
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [modInregistrare, setModInregistrare] = useState(false);
-    const [regEmail, setRegEmail] = useState("");
-    const [regPassword, setRegPassword] = useState("");
-    const [regMsg, setRegMsg] = useState<string | null>(null);
+    // Stare pentru formularele de login si de inregistrare, plus rolul selectat.
+    const [role, setRole] = useState<UserRole>("user");   // rolul ales (admin/user/guest)
+    const [email, setEmail] = useState("");               // emailul de login
+    const [password, setPassword] = useState("");         // parola de login
+    const [showPassword, setShowPassword] = useState(false);  // arat parola in clar?
+    const [isLoading, setIsLoading] = useState(false);    // se trimite o cerere acum? (dezactivez butoanele)
+    const [error, setError] = useState<string | null>(null);  // mesaj de eroare la login
+    const [modInregistrare, setModInregistrare] = useState(false);  // arat formularul de inregistrare in loc de login?
+    const [regEmail, setRegEmail] = useState("");         // emailul din formularul de inregistrare
+    const [regPassword, setRegPassword] = useState("");   // parola din formularul de inregistrare
+    const [regMsg, setRegMsg] = useState<string | null>(null);  // mesaj (succes sau eroare) la inregistrare
     const router = useRouter();
 
     /** Config roluri cu etichete traduse (memoizat pe locale). */
@@ -118,8 +118,8 @@ function LoginPageContent() {
         [t],
     );
 
-    /* --- Efecte: mod inregistrare din query, redirect daca deja autentificat --- */
-    /** Deschide formularul de inregistrare daca URL contine ?inregistrare=1. */
+    // De aici incep efectele: deschid formularul de inregistrare din query si redirectez daca esti deja logat.
+    /** Daca URL-ul contine ?inregistrare=1 (ex. de pe butonul "Inregistrare" din header), deschid direct formularul de cont. */
     useEffect(() => {
         if (searchParams.get("inregistrare") === "1") {
             setModInregistrare(true);
@@ -133,6 +133,7 @@ function LoginPageContent() {
     useEffect(() => {
         if (typeof window !== "undefined") {
             const token = localStorage.getItem("token");
+            // Daca am deja token si nu sunt oaspete, ma duc direct in aplicatie (un oaspete poate ramane pe login ca sa-si faca cont).
             if (token && !isGuestSession()) {
                 router.replace(APP_HOME_PATH);
             }
@@ -140,10 +141,10 @@ function LoginPageContent() {
         // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionat doar la mount; router.replace e stabil
     }, []);
 
-    /* --- Handlere: inregistrare, login, oaspete anonim --- */
-    /** POST /register: creeaza cont user cu email si parola. */
+    // De aici incep handlerele formularelor: inregistrare, login normal si intrare ca oaspete.
+    /** Trimit datele catre POST /register ca sa creez un cont nou. */
     const handleInregistrare = async (e: React.FormEvent) => {
-        e.preventDefault();
+        e.preventDefault();  // opresc reincarcarea paginii (comportamentul implicit al formularului)
         if (!regEmail.trim() || !regPassword) return;
         setIsLoading(true);
         setRegMsg(null);
@@ -162,6 +163,7 @@ function LoginPageContent() {
                 setRegMsg(formatLoginError(data.detail, t("login.errorGeneric")));
                 return;
             }
+            // Cont creat: revin la formularul de login si precompletez emailul, ca sa fie mai usor de intrat.
             setRegMsg(data.mesaj || t("login.accountCreated"));
             setModInregistrare(false);
             setEmail(regEmail.trim());
@@ -172,11 +174,12 @@ function LoginPageContent() {
         }
     };
 
-    /** POST /login cu rol guest: sesiune anonima cu guest_session_id persistent. */
+    /** Intru ca oaspete anonim: cer un token de guest si pastrez acelasi guest_session_id ca sa nu pierd creditele. */
     const intraCaOaspeteAnonim = async () => {
         setIsLoading(true);
         setError(null);
         try {
+            // Daca am mai fost oaspete pe browserul asta, refolosesc acelasi id ca sa pastrez creditele ramase.
             const existingGuestId = getStoredGuestSessionId();
             const response = await fetch(`${API_BASE}/login`, {
                 method: "POST",
@@ -193,9 +196,11 @@ function LoginPageContent() {
                 setError(formatLoginError(data.detail, t("login.errorGeneric")));
                 return;
             }
+            // Salvez tokenul si datele de sesiune in localStorage ca sa raman logat intre navigari.
             localStorage.setItem("token", data.token);
             localStorage.setItem("rol", data.rol);
             localStorage.setItem("email", data.email ?? "");
+            // Retin id-ul de oaspete returnat de server (poate fi unul nou daca n-aveam).
             if (typeof data.guest_session_id === "string") {
                 setStoredGuestSessionId(data.guest_session_id);
             }
@@ -207,10 +212,10 @@ function LoginPageContent() {
         }
     };
 
-    /** POST /login: autentificare admin sau user cu email si parola. */
+    /** Autentificare normala (admin sau user) prin POST /login cu email si parola. */
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (role === "guest") return;
+        if (role === "guest") return;  // rolul guest are buton separat, nu trece prin formularul cu parola
         if (!email.trim() || !password) return;
         setIsLoading(true);
         setError(null);
@@ -229,6 +234,7 @@ function LoginPageContent() {
                 return;
             }
 
+            // Login reusit: salvez sesiunea in localStorage si intru in aplicatie.
             localStorage.setItem("token", data.token);
             localStorage.setItem("rol", data.rol);
             localStorage.setItem("email", data.email ?? "");

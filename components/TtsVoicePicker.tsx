@@ -19,15 +19,16 @@ type Props = {
 
 export function TtsVoicePicker({ value, onChange, disabled = false, compact = false }: Props) {
     const { t, locale } = useI18n();
-    const [voices, setVoices] = useState<TtsVoiceOption[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [open, setOpen] = useState(false);
-    const [previewingId, setPreviewingId] = useState<string | null>(null);
-    const audioRef = useRef<HTMLAudioElement | null>(null);
-    const rootRef = useRef<HTMLDivElement>(null);
+    const [voices, setVoices] = useState<TtsVoiceOption[]>([]);  // catalogul de voci adus de la server
+    const [loading, setLoading] = useState(true);                // se incarca lista de voci?
+    const [open, setOpen] = useState(false);                     // e deschis dropdown-ul?
+    const [previewingId, setPreviewingId] = useState<string | null>(null);  // ce voce se asculta acum (demo)
+    const audioRef = useRef<HTMLAudioElement | null>(null);      // elementul audio al demo-ului curent
+    const rootRef = useRef<HTMLDivElement>(null);                // radacina componentei (pt. click-in-afara)
 
-    /* --- Incarc catalogul de voci la schimbarea limbii UI --- */
+    // Reincarc lista de voci ori de cate ori se schimba limba interfetei (textele demo sunt localizate).
     useEffect(() => {
+        // "cancelled" ma fereste sa actualizez starea daca componenta s-a demontat intre timp.
         let cancelled = false;
         setLoading(true);
         fetchTtsVoices(locale).then((list) => {
@@ -40,7 +41,7 @@ export function TtsVoicePicker({ value, onChange, disabled = false, compact = fa
         };
     }, [locale]);
 
-    /* --- Inchid dropdown la click in afara --- */
+    // Cat timp dropdown-ul e deschis, ascult click-urile din pagina si il inchid daca se da click in afara lui.
     useEffect(() => {
         if (!open) return;
         const onDoc = (e: MouseEvent) => {
@@ -52,7 +53,7 @@ export function TtsVoicePicker({ value, onChange, disabled = false, compact = fa
         return () => document.removeEventListener("mousedown", onDoc);
     }, [open]);
 
-    /* --- Opreste preview la demontare --- */
+    // Cand componenta dispare, opresc orice demo care mai canta (altfel ar continua audio in fundal).
     useEffect(() => {
         return () => {
             if (audioRef.current) {
@@ -62,6 +63,7 @@ export function TtsVoicePicker({ value, onChange, disabled = false, compact = fa
         };
     }, []);
 
+    // Vocea afisata ca selectata: cea aleasa, sau cea implicita, sau prima din lista (in ordinea asta).
     const selected =
         voices.find((v) => v.id === value) ??
         voices.find((v) => v.id === DEFAULT_TTS_VOICE) ??
@@ -75,8 +77,10 @@ export function TtsVoicePicker({ value, onChange, disabled = false, compact = fa
             if (disabled) return;
 
             const voiceId = voice.id;
+            // Aleg limba demo-ului: cea din catalog sau o deduc din prefixul id-ului (en-... = engleza).
             const demoLocale = voice.demo_locale ?? (voiceId.startsWith("en-") ? "en" : "ro");
 
+            // Daca exact aceasta voce canta deja, butonul devine "stop" si opresc.
             if (previewingId === voiceId && audioRef.current) {
                 audioRef.current.pause();
                 audioRef.current = null;
@@ -84,6 +88,7 @@ export function TtsVoicePicker({ value, onChange, disabled = false, compact = fa
                 return;
             }
 
+            // Daca alta voce canta, o opresc inainte sa pornesc demo-ul nou.
             if (audioRef.current) {
                 audioRef.current.pause();
                 audioRef.current = null;
@@ -108,6 +113,7 @@ export function TtsVoicePicker({ value, onChange, disabled = false, compact = fa
     );
 
     const pickVoice = (voiceId: string) => {
+        // Anunt parintele ce voce s-a ales (el o salveaza) si inchid dropdown-ul.
         onChange(voiceId);
         setOpen(false);
     };

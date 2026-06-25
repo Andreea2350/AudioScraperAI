@@ -23,12 +23,11 @@ import {
 import { ttsPreviewUrl } from "@/lib/api";
 import { playLandingPreview, stopLandingPreview, subscribeLandingPreviewStop } from "@/lib/landingPreviewAudio";
 import { useI18n } from "@/lib/i18n";
-import { APP_HOME_PATH } from "@/lib/routes";
 
 const DEMO_VOICE_RO = "ro-RO-AlinaNeural";
 const DEMO_VOICE_EN = "en-US-JennyNeural";
 
-function LandingHeader({ token }: { token: string | null }) {
+function LandingHeader() {
     const { t } = useI18n();
     return (
         <header
@@ -44,14 +43,6 @@ function LandingHeader({ token }: { token: string | null }) {
             <div className="flex items-center gap-2 sm:gap-3">
                 <LanguageToggle onBrandBar />
                 <ThemeToggle onBrandBar />
-                {token ? (
-                    <Link
-                        href={APP_HOME_PATH}
-                        className="px-4 py-2 rounded-xl text-sm font-extrabold text-white border border-white/30 hover:bg-white/10 transition-colors"
-                    >
-                        {t("intro.app")}
-                    </Link>
-                ) : null}
                 <Link
                     href="/login"
                     className="px-4 py-2 rounded-xl text-sm font-bold text-white/90 hover:text-white transition-colors"
@@ -222,25 +213,24 @@ function PlayIcon({ playing }: { playing: boolean }) {
 
 export default function LandingPage() {
     const { t, locale } = useI18n();
-    const [token, setToken] = useState<string | null>(null);
-    const [demoPlaying, setDemoPlaying] = useState(false);
+    const [demoPlaying, setDemoPlaying] = useState(false);  // canta acum demo-ul audio principal?
 
-    useEffect(() => {
-        setToken(typeof window !== "undefined" ? localStorage.getItem("token") : null);
-    }, []);
-
+    // Daca un alt buton de preview porneste (din grila de voci), playerul comun ma anunta sa-mi opresc demo-ul.
     useEffect(() => {
         return subscribeLandingPreviewStop(() => setDemoPlaying(false));
     }, []);
 
+    // Aleg vocea demo dupa limba interfetei (engleza sau romana).
     const demoVoice = locale === "en" ? DEMO_VOICE_EN : DEMO_VOICE_RO;
 
     const toggleDemo = async () => {
+        // Daca demo-ul canta deja, butonul devine "stop".
         if (demoPlaying) {
             stopLandingPreview();
             setDemoPlaying(false);
             return;
         }
+        // Altfel pornesc preview-ul; setez "playing" doar daca chiar a inceput sa cante.
         const ok = await playLandingPreview(ttsPreviewUrl(demoVoice, locale));
         setDemoPlaying(ok);
     };
@@ -270,7 +260,7 @@ export default function LandingPage() {
 
     return (
         <div className="min-h-screen flex flex-col" style={{ backgroundColor: "var(--page-bg)" }}>
-            <LandingHeader token={token} />
+            <LandingHeader />
 
             {/* Hero */}
             <section

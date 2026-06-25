@@ -1,6 +1,10 @@
 "use client";
 
-/* Player + coada segmente TTS: full MP3 principal, sectiuni optionale, redare continua. */
+/**
+ * Player-ul de redare cu coada de segmente TTS. Are doua roluri: in modul "library" afiseaza MP3-ul complet lipit
+ * (plus sectiunile, daca le deschizi), iar in modul "live" arata segmentele pe masura ce se genereaza.
+ * "Play all" reda segmentele unul dupa altul, ca o redare continua a cartii.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GenerationSegment, PlaylistMode } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -43,16 +47,17 @@ export function GenerationPlaylist({
     variant = "live",
 }: Props) {
     const { t, locale } = useI18n();
-    const fullAudioRef = useRef<HTMLAudioElement | null>(null);
-    const queueAudioRef = useRef<HTMLAudioElement | null>(null);
-    const [playingFlatIdx, setPlayingFlatIdx] = useState<number | null>(null);
-    const [playAllActive, setPlayAllActive] = useState(false);
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [sectionsOpen, setSectionsOpen] = useState(false);
-    const [speed, setSpeed] = useState(1);
-    const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
-    const speedMenuRef = useRef<HTMLDivElement>(null);
+    const fullAudioRef = useRef<HTMLAudioElement | null>(null);   // playerul MP3-ului complet
+    const queueAudioRef = useRef<HTMLAudioElement | null>(null);  // playerul folosit la redarea continua a segmentelor
+    const [playingFlatIdx, setPlayingFlatIdx] = useState<number | null>(null);  // ce segment se reda acum (index in lista plata)
+    const [playAllActive, setPlayAllActive] = useState(false);  // ruleaza modul "play all" (redare continua)?
+    const [isPlaying, setIsPlaying] = useState(false);          // canta ceva acum?
+    const [sectionsOpen, setSectionsOpen] = useState(false);    // sunt desfasurate sectiunile (in modul library)?
+    const [speed, setSpeed] = useState(1);                      // viteza de redare (1x, 1.5x etc.)
+    const [speedMenuOpen, setSpeedMenuOpen] = useState(false);  // e deschis meniul de viteza?
+    const speedMenuRef = useRef<HTMLDivElement>(null);          // referinta meniului de viteza (pt. click-in-afara)
 
+    // Cat timp meniul de viteza e deschis, il inchid la click in afara sau la Escape.
     useEffect(() => {
         if (!speedMenuOpen) return;
         const inchide = (e: MouseEvent) => {
@@ -75,13 +80,16 @@ export function GenerationPlaylist({
         if (queueAudioRef.current) queueAudioRef.current.playbackRate = speed;
     });
 
+    // Lista "plata" de segmente care au audio gata, sortate dupa index - asta foloseste redarea continua.
     const flatSegments = useMemo(
         () => [...segments].filter((s) => s.audio_link).sort((a, b) => a.index - b.index),
         [segments],
     );
 
+    // "rows" = randurile afisate in lista. In mod "chapters" grupez segmentele pe capitole; in mod "parts" e cate un rand per segment.
     const rows = useMemo((): PlaylistRow[] => {
         if (playlistMode === "chapters") {
+            // Grupez segmentele dupa indexul capitolului.
             const byChapter = new Map<number, GenerationSegment[]>();
             for (const s of segments) {
                 const ci = s.chapter_index ?? 0;
@@ -124,6 +132,7 @@ export function GenerationPlaylist({
             ? flatSegments[playingFlatIdx]
             : null;
 
+    // Sar la un anumit segment (de ex. cand dau click pe un rand) si, optional, pornesc redarea continua de acolo.
     const jumpToSegment = useCallback(
         (seg: GenerationSegment, enablePlayAll: boolean) => {
             const idx = flatSegments.findIndex((s) => s.index === seg.index);
@@ -136,6 +145,7 @@ export function GenerationPlaylist({
         [flatSegments, onActiveChange],
     );
 
+    // "Play all": pornesc de la primul segment si las redarea sa curga pana la final.
     const playAll = useCallback(() => {
         if (flatSegments.length === 0) return;
         setPlayingFlatIdx(0);
@@ -144,6 +154,7 @@ export function GenerationPlaylist({
         onActiveChange?.(flatSegments[0].index);
     }, [flatSegments, onActiveChange]);
 
+    // Cand se schimba segmentul curent in modul "play all", incarc noua sursa in player si pornesc redarea.
     useEffect(() => {
         const audio = queueAudioRef.current;
         if (!audio || !playAllActive) return;
@@ -157,20 +168,24 @@ export function GenerationPlaylist({
         }
     }, [currentSeg?.audio_link, isPlaying, playAllActive, playingFlatIdx]);
 
+    // Apelat cand se termina un segment: trec automat la urmatorul, iar daca s-a terminat tot, opresc.
     const handleEnded = () => {
         if (!playAllActive || playingFlatIdx == null) {
             setIsPlaying(false);
             return;
         }
         const next = playingFlatIdx + 1;
+        // Mai e un segment? Trec la el.
         if (next < flatSegments.length) {
             setPlayingFlatIdx(next);
             onActiveChange?.(flatSegments[next].index);
             return;
         }
+        // Am ajuns la capat: resetez starea de redare.
         setPlayAllActive(false);
         setPlayingFlatIdx(null);
         setIsPlaying(false);
+        // Daca era doar un preview de oaspete, anunt parintele (el arata invitatia de cont).
         if (isGuestPreview) {
             onGuestPreviewFinished?.();
         }

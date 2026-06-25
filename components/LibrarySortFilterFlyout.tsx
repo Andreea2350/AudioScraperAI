@@ -108,17 +108,19 @@ function applySort(nextKey: LibrarySortKey, nextDir: LibrarySortDir) {
 
 export function LibrarySortFilterFlyout({ className = "" }: { className?: string }) {
     const { t } = useI18n();
-    const [open, setOpen] = useState(false);
-    const [sortKey, setSortKey] = useState<LibrarySortKey>("acces");
-    const [sortDir, setSortDir] = useState<LibrarySortDir>("desc");
-    const wrapRef = useRef<HTMLDivElement>(null);
+    const [open, setOpen] = useState(false);  // e deschis panoul de sortare?
+    const [sortKey, setSortKey] = useState<LibrarySortKey>("acces");  // dupa ce criteriu sortez
+    const [sortDir, setSortDir] = useState<LibrarySortDir>("desc");   // crescator sau descrescator
+    const wrapRef = useRef<HTMLDivElement>(null);  // radacina (pt. click-in-afara)
 
+    // Citesc sortarea salvata in localStorage si o pun in stare (ca butoanele sa arate selectia corecta).
     const syncFromStorage = useCallback(() => {
         const s = loadLibraryUi();
         setSortKey(s.sortKey);
         setSortDir(s.sortDir);
     }, []);
 
+    // La montare iau sortarea curenta din localStorage.
     useEffect(() => {
         syncFromStorage();
     }, [syncFromStorage]);
@@ -135,6 +137,7 @@ export function LibrarySortFilterFlyout({ className = "" }: { className?: string
         return () => window.removeEventListener(LIBRARY_FILTERS_CHANGE_EVENT, onFilters);
     }, []);
 
+    // De fiecare data cand deschid panoul, ma resincronizez (poate s-a schimbat sortarea intre timp).
     useEffect(() => {
         if (!open) return;
         syncFromStorage();

@@ -52,19 +52,19 @@ function ListaDrepturi({ elemente }: { elemente: string[] }) {
 export default function PaginaSetari() {
     const { locale, t } = useI18n();
 
-    /* --- Stare: profil utilizator si tema --- */
-    const [rol, setRol] = useState<RolUtilizator>(null);
-    const [email, setEmail] = useState<string>("");
-    const [tema, setTema] = useState<ThemePreference>("system");
+    // Stare pentru profilul afisat (rol, email) si tema aleasa.
+    const [rol, setRol] = useState<RolUtilizator>(null);  // rolul utilizatorului (admin/user/guest)
+    const [email, setEmail] = useState<string>("");        // emailul afisat
+    const [tema, setTema] = useState<ThemePreference>("system");  // preferinta de tema (luminos/intunecat/sistem)
 
-    /** Citeste rol, email si tema curenta din localStorage / DOM la mount. */
+    /** La mount citesc rolul, emailul si tema salvata (sunt in localStorage, deci doar pe client). */
     useEffect(() => {
         setRol((typeof window !== "undefined" ? localStorage.getItem("rol") : null) as RolUtilizator);
         setEmail(typeof window !== "undefined" ? localStorage.getItem("email") || "" : "");
         setTema(readStoredThemePreference());
     }, []);
 
-    /** Aplica tema light/dark/system si persista in localStorage. */
+    /** Schimb tema: o aplic imediat pe pagina (si o salvez in localStorage) si o tin si in stare pentru butoane. */
     const seteazaTema = (mode: ThemePreference) => {
         applyTheme(mode);
         setTema(mode);

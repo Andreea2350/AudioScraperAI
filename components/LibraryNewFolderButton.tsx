@@ -20,15 +20,16 @@ function FolderPlusIcon() {
 
 export function LibraryNewFolderButton({ className = "" }: { className?: string }) {
     const { t } = useI18n();
-    const [open, setOpen] = useState(false);
-    const [name, setName] = useState("");
+    const [open, setOpen] = useState(false);  // e deschis modalul de nume?
+    const [name, setName] = useState("");      // numele dosarului scris de utilizator
 
     const tooltip = t("library.newFolderTooltip");
 
-    /* Valideaza numele, salveaza dosarul in storage local si notifica ascultatorii. */
+    /* Validez numele, salvez dosarul nou in localStorage si anunt restul UI-ului ca lista de dosare s-a schimbat. */
     const create = () => {
         const trimmed = name.trim();
-        if (!trimmed) return;
+        if (!trimmed) return;  // fara nume nu creez nimic
+        // Generez un id unic pentru dosar (timp + un pic de aleator, ca sa nu se repete).
         const id = `f-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const s = loadLibraryUi();
         patchLibraryUi({ folders: [...s.folders, { id, name: trimmed }] });

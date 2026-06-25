@@ -30,18 +30,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     /** Rute publice fara sidebar/header (landing, login, redirect /intro). */
     const isPublicPage = isPublicPath(pathname);
 
-    /* --- Stare: navigare, upload, cont utilizator --- */
-    const [isUploadOpen, setIsUploadOpen] = useState(false);
-    const [maiMulteOpen, setMaiMulteOpen] = useState(false);
-    const [activeMenu, setActiveMenu] = useState("biblioteca");
-    const [userEmail, setUserEmail] = useState<string | null>(null);
-    const [userRol, setUserRol] = useState<string | null>(null);
-    const [docUploadLoading, setDocUploadLoading] = useState(false);
-    const [docUploadError, setDocUploadError] = useState<string | null>(null);
-    const docFileRef = useRef<HTMLInputElement>(null);
-    const imageFileRef = useRef<HTMLInputElement>(null);
-    const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-    const accountMenuRef = useRef<HTMLDivElement>(null);
+    // Stare pentru navigare, flyout-ul de upload si meniul de cont.
+    const [isUploadOpen, setIsUploadOpen] = useState(false);   // e deschis flyout-ul "Adauga sursa"?
+    const [maiMulteOpen, setMaiMulteOpen] = useState(false);   // e desfasurata sectiunea "Mai multe" din sidebar?
+    const [activeMenu, setActiveMenu] = useState("biblioteca"); // ce buton de meniu e marcat ca activ
+    const [userEmail, setUserEmail] = useState<string | null>(null);  // emailul din localStorage
+    const [userRol, setUserRol] = useState<string | null>(null);      // rolul (admin/user/guest)
+    const [docUploadLoading, setDocUploadLoading] = useState(false);  // se extrage textul dintr-un fisier acum?
+    const [docUploadError, setDocUploadError] = useState<string | null>(null);  // mesajul de eroare la upload
+    const docFileRef = useRef<HTMLInputElement>(null);    // input-ul ascuns pentru documente
+    const imageFileRef = useRef<HTMLInputElement>(null);  // input-ul ascuns pentru imagini
+    const uploadBtnRef = useRef<HTMLButtonElement>(null); // butonul "Incarca sursa" (ancora ferestrei pe desktop)
+    // Pe desktop fereastra de upload e pozitionata "fixed", calculat fata de buton, ca sa nu fie taiata de scroll-ul sidebar-ului.
+    // Pe mobil ramane null si folosesc pozitionarea normala din clase (sub buton).
+    const [uploadFlyoutStyle, setUploadFlyoutStyle] = useState<React.CSSProperties | null>(null);
+    const [accountMenuOpen, setAccountMenuOpen] = useState(false);  // e deschis dropdown-ul de cont?
+    const accountMenuRef = useRef<HTMLDivElement>(null);  // referinta la meniul de cont (ca sa detectez click in afara)
     /** Evita mismatch SSR/client: usePathname() poate diferi la primul paint. */
     const [libraryHeaderReady, setLibraryHeaderReady] = useState(false);
     /** True cand utilizatorul vizualizeaza o carte deschisa pe pagina principala. */
@@ -49,18 +53,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     /** Drawer navigare pe ecrane sub lg (<1024px). */
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-    /* --- Efecte: sincronizare UI cu ruta si sesiune --- */
+    // De aici incep efectele care tin interfata sincronizata cu ruta curenta si cu sesiunea.
     const closeMobileNav = () => setMobileNavOpen(false);
 
+    // Marchez ca header-ul de biblioteca poate fi randat abia dupa primul paint (ca sa evit mismatch SSR/client).
     useEffect(() => {
         setLibraryHeaderReady(true);
     }, []);
 
+    // La fiecare schimbare de ruta inchid drawer-ul de mobil si flyout-ul de upload.
     useEffect(() => {
         closeMobileNav();
         setIsUploadOpen(false);
     }, [pathname]);
 
+    // Cat timp e deschis drawer-ul pe mobil: blochez scroll-ul paginii si ascult tasta Escape ca sa-l inchid.
     useEffect(() => {
         if (!mobileNavOpen) return;
         document.body.style.overflow = "hidden";
@@ -74,6 +81,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         };
     }, [mobileNavOpen]);
 
+    // Daca ecranul devine lat (>=1024px), inchid drawer-ul de mobil pentru ca apare sidebar-ul fix.
     useEffect(() => {
         const mq = window.matchMedia("(min-width: 1024px)");
         const onChange = () => {
@@ -83,6 +91,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         return () => mq.removeEventListener("change", onChange);
     }, []);
 
+    // Cand plec de pe pagina principala, resetez indicatorul "carte deschisa" (altfel ar ramane butonul de back).
     useEffect(() => {
         if (!isAppHomePath(pathname)) setBookViewOpen(false);
     }, [pathname]);
@@ -162,10 +171,48 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         };
     }, [accountMenuOpen]);
 
-    /* --- Handlere: navigare, upload fisier, actiuni sidebar --- */
-    /** Navigheaza la / apoi ruleaza callback (pentru evenimente pe Home). */
+    /**
+     * Cand deschid fereastra de upload pe desktop, o pozitionez "fixed" langa butonul "Incarca sursa".
+     * Asa nu mai e taiata de zona cu scroll a sidebar-ului (problema de afisaj: trebuia sa dau scroll ca s-o vad).
+     * Recalculez pozitia la scroll si la redimensionarea ferestrei. Pe ecrane mici nu fac nimic special:
+     * las null, iar fereastra apare normal sub buton (din clasele Tailwind).
+     */
+    useEffect(() => {
+        if (!isUploadOpen) return;
+        // Doar pe desktop (>=1024px) folosesc pozitionarea fixed; pe mobil ramane comportamentul implicit.
+        const esteDesktop = window.matchMedia("(min-width: 1024px)").matches;
+        if (!esteDesktop) {
+            setUploadFlyoutStyle(null);
+            return;
+        }
+        const recalculeazaPozitia = () => {
+            const btn = uploadBtnRef.current;
+            if (!btn) return;
+            // Iau coltul butonului si asez fereastra imediat in dreapta lui, aliniata sus.
+            const r = btn.getBoundingClientRect();
+            setUploadFlyoutStyle({
+                position: "fixed",
+                top: r.top,
+                left: r.right + 8,  // 8px spatiu intre buton si fereastra
+                right: "auto",      // anulez "right-0" din clase, ca sa nu se intinda gresit
+                width: "20rem",     // aceeasi latime ca lg:w-80
+            });
+        };
+        recalculeazaPozitia();
+        window.addEventListener("resize", recalculeazaPozitia);
+        // true = ascult si scroll-ul din interiorul sidebar-ului (faza de capture), nu doar al ferestrei.
+        window.addEventListener("scroll", recalculeazaPozitia, true);
+        return () => {
+            window.removeEventListener("resize", recalculeazaPozitia);
+            window.removeEventListener("scroll", recalculeazaPozitia, true);
+        };
+    }, [isUploadOpen]);
+
+    // De aici incep handlerele pentru navigare, upload de fisiere si actiunile din sidebar.
+    /** Ma duc pe pagina principala si abia apoi rulez callback-ul (folosit cand evenimentul trebuie ascultat de Home). */
     const goHomeThen = (fn: () => void) => {
         if (!isAppHomePath(pathname)) {
+            // Daca nu sunt deja pe Home, navighez si astept putin sa apuce sa monteze listenerii inainte sa trimit evenimentul.
             router.push(APP_HOME_PATH);
             window.setTimeout(fn, 120);
         } else {
@@ -177,8 +224,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const incarcaFisierSiDeschideEditor = async (file: File | undefined) => {
         if (!file) return;
         const isImage = isImageUploadFile(file);
+        // Daca ruleaza deja o generare, butoanele sunt blocate, deci nu pornesc un upload nou.
         if (isImage && disableImagePick) return;
         if (!isImage && disableDocumentPick) return;
+        // Imaginile (OCR) sunt doar pentru conturile reale, nu pentru oaspeti.
         if (isGuestSession() && isImageUploadFile(file)) {
             setDocUploadError(t("shell.imageLocked"));
             return;
@@ -186,6 +235,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         setDocUploadLoading(true);
         setDocUploadError(null);
         try {
+            // Trimit fisierul ca multipart/form-data catre endpoint-ul de extragere.
             const fd = new FormData();
             fd.append("file", file);
             const res = await fetch(`${API_BASE}/extrage_fisier`, {
@@ -206,12 +256,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 setDocUploadError(t("shell.uploadUnexpected"));
                 return;
             }
+            // Pregatesc datelele pentru editor: titlu sugerat (sau numele fisierului fara extensie), textul si meta-info.
             const detail = {
                 titlu: data.titlu_sugerat || file.name.replace(/\.[^/.]+$/, ""),
                 text: data.text as string,
                 extract_meta: (data.extract_meta as Record<string, unknown> | undefined) ?? null,
                 filename: file.name,
             };
+            // Trimit textul extras catre pagina principala, care il pune in editor.
             goHomeThen(() =>
                 window.dispatchEvent(new CustomEvent("document-text-incarcat", { detail })),
             );
@@ -282,12 +334,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     const isGuest = userRol === "guest";
 
-    /* --- Randare: pagina publica (fara chrome) --- */
+    // Pe paginile publice (landing, login, intro) nu pun sidebar/header, afisez doar continutul.
     if (isPublicPage) {
         return <>{children}</>;
     }
 
-    /* --- Randare: layout principal cu sidebar si header --- */
+    // Pe rutele private randez layout-ul complet: sidebar in stanga, header sus si pagina in mijloc.
     return (
         <div
             className="flex h-screen w-full overflow-hidden"
@@ -388,6 +440,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                             }}
                         />
                         <button
+                            ref={uploadBtnRef}
                             type="button"
                             disabled={disableUpload}
                             title={disableUpload ? lockHint : undefined}
@@ -414,6 +467,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                     color: "var(--text-primary)",
                                     boxShadow: "var(--shadow-dropdown)",
                                     border: "1px solid var(--border-card)",
+                                    // Pe desktop suprascriu pozitionarea cu valorile calculate (fixed), ca sa nu fie taiata de scroll.
+                                    ...(uploadFlyoutStyle ?? {}),
                                 }}
                             >
                                 <div

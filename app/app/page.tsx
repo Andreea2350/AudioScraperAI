@@ -42,7 +42,7 @@ import {
     type LibraryViewMode,
 } from "@/lib/libraryUiStorage";
 import { getStoredTtsVoice, setStoredTtsVoice } from "@/lib/ttsVoiceStorage";
-import { getStoredSummary, setStoredSummary } from "@/lib/summaryStorage";
+import { clearStoredSummary, getStoredSummary, setStoredSummary } from "@/lib/summaryStorage";
 
 /**
  * Ecranul principal dupa login: lista de carti (GET /istoric), redare audio, editor pentru text manual,
@@ -52,24 +52,24 @@ export default function Home() {
     const { t, locale } = useI18n();
     const router = useRouter();
 
-    /* --- Stare: modal URL si regenerare --- */
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [url, setUrl] = useState("");
-    const [forceRegenerate, setForceRegenerate] = useState(false);
+    // Stare pentru modalul de URL (extragere din link web) si optiunea de regenerare fortata.
+    const [isModalOpen, setIsModalOpen] = useState(false);   // e deschis modalul de URL?
+    const [url, setUrl] = useState("");                       // ce URL a scris utilizatorul
+    const [forceRegenerate, setForceRegenerate] = useState(false);  // regenereaza chiar daca exista in cache?
 
-    /* --- Stare: editor text manual --- */
-    const [showTextEditor, setShowTextEditor] = useState(false);
-    const [titluText, setTitluText] = useState("");
-    const [textManual, setTextManual] = useState("");
-    /** Numele fisierului sursa cand textul din editor provine dintr-un document; null = text manual. */
+    // Stare pentru editorul de text manual (sau pentru textul extras dintr-un document).
+    const [showTextEditor, setShowTextEditor] = useState(false);  // e deschis editorul de text?
+    const [titluText, setTitluText] = useState("");               // titlul scris in editor
+    const [textManual, setTextManual] = useState("");             // continutul din editor
+    /** Numele fisierului sursa cand textul din editor vine dintr-un document; null inseamna text scris de mana. */
     const [editorSourceName, setEditorSourceName] = useState<string | null>(null);
 
-    /* --- Stare: biblioteca, cartea activa --- */
-    const [istoricCarti, setIstoricCarti] = useState<any[]>([]);
-    const [carteaCurenta, setCarteaCurenta] = useState<any>(null);
+    // Stare pentru biblioteca: lista de carti si cartea deschisa acum.
+    const [istoricCarti, setIstoricCarti] = useState<any[]>([]);  // toate cartile utilizatorului (de la GET /istoric)
+    const [carteaCurenta, setCarteaCurenta] = useState<any>(null);  // cartea afisata in ecranul de redare (null = niciuna)
 
-    /* --- Stare: meniuri contextuale, redenumire, stergere, toast --- */
-    const [meniuDeschisId, setMeniuDeschisId] = useState<number | null>(null);
+    // Stare pentru meniurile contextuale si modalele de redenumire/stergere.
+    const [meniuDeschisId, setMeniuDeschisId] = useState<number | null>(null);  // ce card are meniul "..." deschis
     const [modalRedenumire, setModalRedenumire] = useState(false);
     const [carteDeRedenumit, setCarteDeRedenumit] = useState<any>(null);
     const [titluNou, setTitluNou] = useState("");
@@ -77,20 +77,20 @@ export default function Home() {
     const [modalStergere, setModalStergere] = useState(false);
     const [carteDeSters, setCarteDeSters] = useState<number | string | null>(null);
 
-    /* --- Stare: credite guest, generare streaming --- */
-    const [guestCredits, setGuestCredits] = useState<GuestCreditsInfo | null>(null);
-    const genJob = useGenerationJob();
-    const streamBusy = genJob.busy && genJob.kind === "stream";
-    const { enabled: readingFontOn } = useReadingFont();
-    const [genActiveSegment, setGenActiveSegment] = useState<number | null>(null);
-    const [showGuestSignupPrompt, setShowGuestSignupPrompt] = useState(false);
-    const [libSegments, setLibSegments] = useState<GenerationSegment[]>([]);
-    const [libPlaylistMode, setLibPlaylistMode] = useState<PlaylistMode>("parts");
-    const [documentExtractMeta, setDocumentExtractMeta] = useState<DocumentExtractMeta | null>(null);
-    const [curataCuGemini, setCurataCuGemini] = useState(false);
-    const [ttsVoice, setTtsVoice] = useState(() => getStoredTtsVoice());
-    const [summaryText, setSummaryText] = useState<string | null>(null);
-    const [summaryLoading, setSummaryLoading] = useState(false);
+    // Stare legata de creditele de oaspete si de generarea in timp real (streaming).
+    const [guestCredits, setGuestCredits] = useState<GuestCreditsInfo | null>(null);  // cate credite mai are oaspetele
+    const genJob = useGenerationJob();  // ma abonez la jobul global de generare (vine din generationJob.ts)
+    const streamBusy = genJob.busy && genJob.kind === "stream";  // ruleaza chiar acum o generare de tip stream?
+    const { enabled: readingFontOn } = useReadingFont();  // e activat fontul prietenos la citit?
+    const [genActiveSegment, setGenActiveSegment] = useState<number | null>(null);  // segmentul care se reda acum
+    const [showGuestSignupPrompt, setShowGuestSignupPrompt] = useState(false);  // arat invitatia de cont dupa preview-ul de oaspete?
+    const [libSegments, setLibSegments] = useState<GenerationSegment[]>([]);  // segmentele cartii deschise din biblioteca
+    const [libPlaylistMode, setLibPlaylistMode] = useState<PlaylistMode>("parts");  // mod playlist pt cartea deschisa
+    const [documentExtractMeta, setDocumentExtractMeta] = useState<DocumentExtractMeta | null>(null);  // info despre documentul extras
+    const [curataCuGemini, setCurataCuGemini] = useState(false);  // bifa "curata textul cu AI"
+    const [ttsVoice, setTtsVoice] = useState(() => getStoredTtsVoice());  // vocea aleasa (initial cea salvata)
+    const [summaryText, setSummaryText] = useState<string | null>(null);  // rezumatul cartii curente
+    const [summaryLoading, setSummaryLoading] = useState(false);  // se genereaza rezumatul acum?
 
     /** Goleste indexul segmentului activ (playlist live e in job-ul global). */
     const resetGenStreamUi = useCallback(() => {
@@ -98,8 +98,9 @@ export default function Home() {
         setGenActiveSegment(null);
     }, []);
 
-    /** Opreste generarea pe server dupa confirmare. */
+    /** Opresc generarea de pe server, dar numai dupa ce utilizatorul confirma in dialog. */
     const cancelGeneration = useCallback(async () => {
+        // Cer confirmare ca sa nu opreasca din greseala o generare lunga.
         const ok = await confirmDialog({ message: t("gen.cancelConfirm"), title: t("gen.cancelGeneration") });
         if (!ok) return;
         await cancelActiveGenerationJob();
@@ -116,9 +117,11 @@ export default function Home() {
 
     /** Redeschide modalul URL sau editorul text pentru job-ul stream activ. */
     const openStreamProgressView = useCallback(() => {
+        // Daca nu mai ruleaza nimic, nu am ce ecran de progres sa redeschid.
         const job = getGenerationJobState();
         if (!job.busy || job.kind !== "stream" || !job.streamOrigin) return;
         setCarteaCurenta(null);
+        // Redeschid exact ecranul de unde a pornit generarea: modalul de URL sau editorul de text.
         if (job.streamOrigin === "url") {
             setShowTextEditor(false);
             setIsModalOpen(true);
@@ -128,21 +131,23 @@ export default function Home() {
         }
     }, []);
 
-    /* --- Stare: dosare biblioteca, sortare, filtre, vizualizare --- */
-    const [folders, setFolders] = useState<LibraryFolder[]>([]);
-    const [bookFolderId, setBookFolderId] = useState<Record<string, string | null>>({});
-    const [viewMode, setViewMode] = useState<LibraryViewMode>("grid");
-    const [sortKey, setSortKey] = useState<LibrarySortKey>("acces");
-    const [sortDir, setSortDir] = useState<LibrarySortDir>("desc");
-    const [nameFilter, setNameFilter] = useState("");
-    const [mutaCarteTarget, setMutaCarteTarget] = useState<any>(null);
+    // Stare pentru organizarea bibliotecii (dosare, sortare, filtru, mod de afisare) - tinuta local pe browser.
+    const [folders, setFolders] = useState<LibraryFolder[]>([]);  // dosarele create de utilizator
+    const [bookFolderId, setBookFolderId] = useState<Record<string, string | null>>({});  // in ce dosar e fiecare carte
+    const [viewMode, setViewMode] = useState<LibraryViewMode>("grid");  // grid sau lista
+    const [sortKey, setSortKey] = useState<LibrarySortKey>("acces");    // dupa ce sortez (nume/data/acces/dimensiune)
+    const [sortDir, setSortDir] = useState<LibrarySortDir>("desc");     // crescator sau descrescator
+    const [nameFilter, setNameFilter] = useState("");                   // textul de cautare dupa titlu
+    const [mutaCarteTarget, setMutaCarteTarget] = useState<any>(null);  // cartea pe care o mut intr-un dosar
 
-    /* --- Efecte: credite guest, persistenta UI biblioteca --- */
+    // De aici incep efectele (useEffect): incarc creditele de oaspete si tin sincronizata organizarea bibliotecii.
     useEffect(() => {
+        // Daca nu sunt oaspete, nu am credite de afisat.
         if (!isGuestSession()) {
             setGuestCredits(null);
             return;
         }
+        // Reincarc creditele de fiecare data cand se termina o generare (streamBusy se schimba), ca sa fie la zi.
         fetchGuestCredits().then(setGuestCredits).catch(() => setGuestCredits(null));
     }, [streamBusy]);
 
@@ -267,6 +272,7 @@ export default function Home() {
                 }
                 const json = await response.json();
                 if (json.status === "success" && json.data) {
+                    // Transform fiecare carte din DB in forma de care are nevoie UI-ul (etichete de data, lungime text etc.).
                     const cartiFormatate = json.data.map((item: any) => {
                         const ts = item.creat_la ? new Date(item.creat_la).getTime() : 0;
                         const accessIso = item.ultima_accesare ?? null;
@@ -286,6 +292,7 @@ export default function Home() {
                             lungime_text: typeof txt === "string" ? txt.length : 0,
                         };
                     });
+                    // Daca utilizatorul n-a inchis cartea de prezentare, o pun prima in lista (cu un timestamp urias ca sa stea sus).
                     const ws = getWelcomeState();
                     if (!ws.dismissed) {
                         const welcomeText = t("home.welcomeText");
@@ -352,8 +359,9 @@ export default function Home() {
         );
     }, [carteaCurenta]);
 
-    /* --- Handlere: streaming generare (job global) --- */
+    // De aici incep handlerele (functiile chemate la actiunile utilizatorului), incepand cu generarea prin job-ul global.
     const handleTtsVoiceChange = (voiceId: string) => {
+        // Cand schimba vocea: o tin in stare si o salvez in localStorage ca s-o regasesc data viitoare.
         setTtsVoice(voiceId);
         setStoredTtsVoice(voiceId);
     };
@@ -362,6 +370,8 @@ export default function Home() {
     const handleGenereazaRezumat = useCallback(async () => {
         if (!carteaCurenta?.id || carteaCurenta.is_welcome || summaryLoading) return;
         setSummaryLoading(true);
+        clearStoredSummary(carteaCurenta.id);
+        setSummaryText(null);
         try {
             const rezumat = await fetchCarteRezumat(Number(carteaCurenta.id));
             setSummaryText(rezumat);
@@ -372,7 +382,7 @@ export default function Home() {
         } finally {
             setSummaryLoading(false);
         }
-    }, [carteaCurenta?.id, carteaCurenta?.is_welcome, summaryLoading, t]);
+    }, [carteaCurenta, summaryLoading, t]);
 
     /** POST /extrage/stream: URL → extract + TTS cu playlist live. */
     const handleGenereaza = async () => {
@@ -420,15 +430,17 @@ export default function Home() {
         }
     };
 
-    /* --- Handlere: meniu contextual pe card carte --- */
-    /** Meniu contextual pe card (redenumire, descarcare, stergere): un singur deschis o data. */
+    // Handlerele meniului contextual de pe fiecare card de carte (cele trei puncte).
+    /** Deschid/inchid meniul "..." al unui card; tin doar unul deschis la un moment dat. */
     const toggleMeniu = (e: React.MouseEvent, id: number) => {
+        // stopPropagation ca sa nu se inchida instant meniul din cauza click-ului global de "inchide la click in afara".
         e.stopPropagation();
         setMeniuDeschisId(meniuDeschisId === id ? null : id);
     };
 
-    /* --- Handlere: meniu contextual carte (share, download, redenumire, stergere) --- */
+    // Actiunile din meniul contextual: copiere link, descarcare, redenumire, stergere.
     const handleShare = (e: React.MouseEvent, link: string) => {
+        // Copiez link-ul audio in clipboard si confirm printr-un toast.
         e.stopPropagation();
         navigator.clipboard.writeText(link);
         setMeniuDeschisId(null);
@@ -439,6 +451,7 @@ export default function Home() {
         e.stopPropagation();
         setMeniuDeschisId(null);
         try {
+            // Descarc fisierul ca blob si fortez download-ul cu un <a> ascuns, ca sa pot pune numele cartii.
             const response = await fetch(link);
             const blob = await response.blob();
             const downloadUrl = window.URL.createObjectURL(blob);
@@ -449,6 +462,7 @@ export default function Home() {
             a.click();
             a.remove();
         } catch {
+            // Daca descarcarea cu blob nu merge (ex. CORS), deschid pur si simplu link-ul intr-un tab nou.
             window.open(link, "_blank");
         }
     };
@@ -463,6 +477,7 @@ export default function Home() {
 
     const salveazaRedenumire = async () => {
         if (!titluNou.trim()) return;
+        // Cartea de prezentare e doar locala, deci ii salvez titlul in localStorage, nu pe server.
         if (carteDeRedenumit?.id === WELCOME_BOOK_ID) {
             const nou = titluNou.trim();
             setWelcomeTitle(nou);
@@ -493,6 +508,7 @@ export default function Home() {
 
     const confirmaStergerea = async () => {
         if (carteDeSters === null) return;
+        // La fel ca la redenumire: cartea de prezentare o "sterg" doar local (o marchez ca inchisa).
         if (carteDeSters === WELCOME_BOOK_ID) {
             setWelcomeDismissed();
             setIstoricCarti(istoricCarti.filter((c) => c.id !== WELCOME_BOOK_ID));
@@ -519,7 +535,7 @@ export default function Home() {
         }
     };
 
-    /** Inchide meniul contextual la click in afara cardului. */
+    /** Inchid meniul contextual cand utilizatorul da click oriunde in afara lui. */
     useEffect(() => {
         const handleClickOutside = () => setMeniuDeschisId(null);
         window.addEventListener("click", handleClickOutside);
@@ -528,10 +544,13 @@ export default function Home() {
 
     const deschideCarte = useCallback(
         (carte: { id: number | string; is_welcome?: boolean }) => {
+            // Deschid cartea in ecranul de redare.
             setCarteaCurenta(carte);
+            // Cartea de prezentare nu exista pe server, deci nu marchez accesul pentru ea.
             if (carte.id === WELCOME_BOOK_ID || carte.is_welcome) return;
             const id = Number(carte.id);
             if (!Number.isFinite(id)) return;
+            // Anunt serverul ca am deschis-o (actualizeaza ultima_accesare) si apoi reflect noua data in UI.
             void touchCarteAccess(id).then((iso) => {
                 if (!iso) return;
                 const ts = bookAccessTimestamp(iso);
@@ -550,11 +569,14 @@ export default function Home() {
         [locale, t],
     );
 
-    /* --- Derived: filtrare, sortare, sectiuni dosare --- */
+    // Valori derivate (calculate din stare cu useMemo): lista filtrata si sortata + gruparea pe dosare.
     const cartiFiltrate = useMemo(() => {
+        // Pornesc de la o copie a listei ca sa nu modific starea direct.
         let list = [...istoricCarti];
+        // Aplic filtrul de cautare dupa titlu, daca exista.
         const q = nameFilter.trim().toLowerCase();
         if (q) list = list.filter((c) => (c.titlu || "").toLowerCase().includes(q));
+        // dir = 1 pentru crescator, -1 pentru descrescator (inversez rezultatul comparatiei).
         const dir = sortDir === "asc" ? 1 : -1;
         list.sort((a, b) => {
             if (sortKey === "nume") {
@@ -573,9 +595,10 @@ export default function Home() {
 
     type CarteRow = (typeof istoricCarti)[number];
 
-    /** Grupeaza cartile filtrate pe dosare + sectiunea "nefolderate". */
+    /** Grupez cartile filtrate pe dosare, plus o sectiune "fara dosar" pentru restul. */
     const librarySections = useMemo(() => {
         const unfiledLabel = t("library.sectionUnfiled");
+        // Aflu in ce dosar e o carte; daca dosarul a fost sters intre timp, o tratez ca fiind in radacina.
         const resolveFolder = (c: CarteRow): string | null => {
             const fid = getBookFolderId(bookFolderId, c.id);
             if (!fid) return null;
@@ -621,14 +644,16 @@ export default function Home() {
         return sections;
     }, [cartiFiltrate, folders, bookFolderId, t]);
 
-    /* --- Handlere: dosare biblioteca --- */
+    // Handlerele pentru dosarele bibliotecii (creare/stergere/mutare carti).
     const stergeDosar = (e: React.MouseEvent, folderId: string) => {
+        // Sterg dosarul din lista si scot maparea cartilor care erau in el (cartile raman, doar ies din dosar).
         e.stopPropagation();
         setFolders((prev) => prev.filter((f) => f.id !== folderId));
         setBookFolderId((prev) => removeBookAssignmentsForFolder(prev, folderId));
     };
 
     const mutaCarteInDosar = (carteId: number, folderId: string | null) => {
+        // Mut cartea in dosarul ales (sau o scot din dosar daca folderId e null) si inchid meniurile.
         setBookFolderId((prev) => mapSetBookFolder(prev, carteId, folderId));
         setMutaCarteTarget(null);
         setMeniuDeschisId(null);
@@ -642,7 +667,7 @@ export default function Home() {
         >
 
             {carteaCurenta ? (
-                /* --- Ecran redare audio: player, text extras --- */
+                /* Ecranul de redare: aici afisez player-ul audio si textul extras al cartii deschise. */
                 <div
                     className="w-full max-w-4xl mx-auto p-10 rounded-3xl mt-4"
                     style={{
@@ -810,7 +835,7 @@ export default function Home() {
 
             ) : showTextEditor ? (
 
-                /* --- Ecran editor text manual si generare --- */
+                /* Ecranul editorului de text: scriu/lipesc text (sau il aduc dintr-un document) si pornesc generarea. */
                 <div
                     className="mx-auto mt-1 flex min-h-0 w-full max-w-6xl flex-1 flex-col xl:max-w-7xl"
                     style={{ animation: "fade-in 0.3s ease-out" }}
@@ -826,6 +851,7 @@ export default function Home() {
                         <input
                             type="text"
                             placeholder={t("home.materialTitlePlaceholder")}
+                            lang={locale === "en" ? "en" : "ro"}
                             className="mb-3 w-full border-0 bg-transparent p-1 text-center text-xl font-extrabold placeholder-[var(--text-faint)]"
                             style={{
                                 borderBottom: "2px solid var(--input-border)",
@@ -878,6 +904,7 @@ export default function Home() {
 
                         <textarea
                             placeholder={t("home.textPlaceholder")}
+                            lang={locale === "en" ? "en" : "ro"}
                             className="min-h-0 w-full flex-1 resize-none border-0 bg-transparent p-2 text-base leading-relaxed lg:text-lg"
                             style={{ color: "var(--text-body)", outline: "none" }}
                             value={textManual}
@@ -1029,7 +1056,7 @@ export default function Home() {
 
             ) : (
 
-                /* --- Ecran biblioteca: grid/list pe dosare --- */
+                /* Ecranul bibliotecii: cartile afisate ca grid sau lista, grupate pe dosare. */
                 <div className="flex-1 flex flex-col items-center justify-center relative">
                     {istoricCarti.length === 0 ? (
                         <div className="mt-[-10vh] text-center" style={{ animation: "fade-in 0.4s ease-out" }}>
@@ -1447,7 +1474,7 @@ export default function Home() {
                 </div>
             )}
 
-            {/* --- Modal URL: extragere si generare din link web --- */}
+            {/* Modalul de URL: aici lipesc un link web ca sa extrag textul si sa generez audio din el. */}
             {isModalOpen && (
                 <div
                     className="fixed inset-0 flex items-center justify-center z-50 p-4"
@@ -1597,7 +1624,7 @@ export default function Home() {
                 </div>
             )}
 
-            {/* --- Modal redenumire carte --- */}
+            {/* Modalul de redenumire a unei carti. */}
             {modalRedenumire && (
                 <div
                     className="fixed inset-0 flex items-center justify-center z-50 p-4"
@@ -1667,7 +1694,7 @@ export default function Home() {
                 </div>
             )}
 
-            {/* --- Modal confirmare stergere --- */}
+            {/* Modalul de confirmare a stergerii unei carti. */}
             {modalStergere && (
                 <div
                     className="fixed inset-0 flex items-center justify-center z-50 p-4"
@@ -1730,7 +1757,7 @@ export default function Home() {
                 </div>
             )}
 
-            {/* --- Modal muta carte in dosar --- */}
+            {/* Modalul prin care mut o carte intr-un dosar. */}
             {mutaCarteTarget && (
                 <div
                     className="fixed inset-0 flex items-center justify-center z-50 p-4"
@@ -1814,7 +1841,7 @@ export default function Home() {
                     </div>
                 </div>
             )}
-            {/* --- Prompt inregistrare dupa preview guest --- */}
+            {/* Invitatia de a-ti face cont, aratata oaspetelui dupa ce a ascultat preview-ul. */}
             {showGuestSignupPrompt && (
                 <div
                     className="fixed inset-0 flex items-center justify-center z-[60] p-4"

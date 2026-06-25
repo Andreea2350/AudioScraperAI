@@ -44,9 +44,10 @@ def main() -> None:
         sys.exit(1)
 
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    # Emailul tinta, normalizat la litere mici (la fel cum il stocheaza backend-ul).
     target = args.email.strip().lower()
 
-    # Verific conexiunea la tabelul carti
+    # Fac un select minimal ca sa verific ca pot ajunge la tabelul carti inainte sa modific ceva.
     try:
         supabase.table("carti").select("id").limit(1).execute()
     except APIError as e:
@@ -54,7 +55,7 @@ def main() -> None:
         sys.exit(1)
 
     if args.all:
-        # Mod agresiv: suprascriu proprietarul pentru fiecare carte
+        # Mod agresiv (--all): suprascriu proprietarul pentru TOATE cartile, indiferent ce aveau inainte.
         res = supabase.table("carti").select("id").execute()
         rows = res.data or []
         n = 0
@@ -65,17 +66,21 @@ def main() -> None:
         return
 
     def count_where_null() -> int:
+        # Numar cartile fara proprietar (created_by_email NULL).
         r = supabase.table("carti").select("id").is_("created_by_email", "null").execute()
         return len(r.data or [])
 
     def count_where_user() -> int:
+        # Numar cartile care apartin deja utilizatorului tinta.
         r = supabase.table("carti").select("id").eq("created_by_email", target).execute()
         return len(r.data or [])
 
     try:
+        # Retin cate carti erau fara proprietar inainte, ca sa pot raporta cate am atribuit.
         n_null_inainte = count_where_null()
     except APIError as e:
         err = str(e)
+        # Daca lipseste coloana created_by_email, scriptul nu are sens pana nu rulez migrarea.
         if "created_by_email" in err or "42703" in err:
             print(
                 "Coloana created_by_email nu exista inca in tabelul carti.\n"

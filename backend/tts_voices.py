@@ -1,15 +1,20 @@
 """
-Catalog vocile disponibile in UI (Edge neural + gTTS) si helper pentru validare.
+Catalogul de voci pe care le poate alege utilizatorul din UI. Majoritatea sunt voci neurale
+de la Microsoft Edge (suna natural), plus o optiune gTTS (voce simpla Google, ca rezerva).
+Tot aici am helperele care valideaza ce voce a cerut clientul si construiesc configuratia TTS.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Vocea implicita: feminina, romaneasca (Alina). O folosesc cand clientul nu cere nimic anume.
 DEFAULT_EDGE_VOICE = "ro-RO-AlinaNeural"
 DEFAULT_VOICE_ID = DEFAULT_EDGE_VOICE
+# Id-ul special pentru optiunea gTTS (nu e o voce Edge, ci motorul Google).
 GTTS_VOICE_ID = "gtts-ro"
 
-# Lista curata pentru picker. Camp "engine": edge (implicit) sau gtts.
+# Lista de voci afisate in picker. Fiecare are si texte demo localizate (ro/en) si campul "engine".
+# Tin separat trait_ro/trait_en si language_ro/language_en ca sa pot afisa UI-ul bilingv.
 VOICE_CATALOG: list[dict] = [
     {
         "id": "ro-RO-AlinaNeural",
@@ -44,7 +49,7 @@ VOICE_CATALOG: list[dict] = [
         "trait_en": "Friendly, clear",
         "language_ro": "Engleza (SUA)",
         "language_en": "English (US)",
-        "demo_locale": "en",
+        "demo_locale": "en",  # demo-ul ei e in engleza, nu in romana
         "sample_text_ro": "Hello! This is my voice for audiobooks in American English.",
         "sample_text_en": "Hello! This is my voice for audiobooks in American English.",
     },
@@ -88,19 +93,20 @@ VOICE_CATALOG: list[dict] = [
     },
 ]
 
+# Set cu toate id-urile valide, ca sa pot verifica rapid daca o voce ceruta exista.
 _VOICE_IDS = {v["id"] for v in VOICE_CATALOG}
 
 
 @dataclass
 class TtsConfig:
-    """Optiuni TTS per cerere (alese in UI)."""
+    """Optiunile TTS pentru o singura cerere de generare (ce motor, ce voce, daca accept fallback)."""
     engine: str = "edge"
     edge_voice: str = DEFAULT_EDGE_VOICE
     allow_fallback: bool = False
 
 
 def _catalog_entry(voice_id: str) -> dict | None:
-    """Caut intrarea din catalog dupa id."""
+    """Caut in catalog intrarea cu id-ul dat; None daca nu exista."""
     for v in VOICE_CATALOG:
         if v["id"] == voice_id:
             return v
@@ -108,7 +114,7 @@ def _catalog_entry(voice_id: str) -> dict | None:
 
 
 def resolve_voice_id(voice_id: str | None) -> str:
-    """Validez ID-ul primit de la client; la invalid folosesc vocea implicita."""
+    """Validez id-ul venit de la client. Daca nu e in catalog, ma intorc la vocea implicita (nu crap)."""
     vid = (voice_id or "").strip()
     if vid in _VOICE_IDS:
         return vid
@@ -116,7 +122,7 @@ def resolve_voice_id(voice_id: str | None) -> str:
 
 
 def _demo_locale_for_entry(entry: dict) -> str:
-    """Limba textului demo (ro sau en) dupa camp demo_locale sau prefix id."""
+    """Stabilesc limba textului demo: campul demo_locale, altfel din prefixul id-ului (en-... = engleza)."""
     if entry.get("demo_locale") in ("ro", "en"):
         return entry["demo_locale"]
     vid = entry.get("id", "")
@@ -126,10 +132,11 @@ def _demo_locale_for_entry(entry: dict) -> str:
 
 
 def voice_catalog_for_api(locale: str = "ro") -> list[dict]:
-    """Intorc lista de voci pentru GET /tts/voices (campuri localizate)."""
+    """Pregatesc lista de voci pentru GET /tts/voices, cu campurile deja traduse in limba ceruta."""
     en = locale == "en"
     out: list[dict] = []
     for v in VOICE_CATALOG:
+        # Pentru fiecare voce aleg varianta ro sau en a textelor in functie de locale.
         out.append(
             {
                 "id": v["id"],
@@ -146,17 +153,18 @@ def voice_catalog_for_api(locale: str = "ro") -> list[dict]:
 
 
 def sample_text_for_voice(voice_id: str, locale: str = "ro") -> str:
-    """Text scurt pentru previzualizarea unei voci (in limba nativa a vocii)."""
+    """Textul scurt folosit la previzualizarea unei voci (mereu in limba nativa a vocii)."""
     vid = resolve_voice_id(voice_id)
     entry = _catalog_entry(vid)
     if entry:
         demo = _demo_locale_for_entry(entry)
         return entry["sample_text_en"] if demo == "en" else entry["sample_text_ro"]
+    # Daca nu gasesc vocea, folosesc textul primei voci din catalog.
     return VOICE_CATALOG[0]["sample_text_ro"]
 
 
 def preview_locale_for_voice(voice_id: str) -> str:
-    """Locale folosit la GET /tts/preview (limba textului demo)."""
+    """Ce locale folosesc la GET /tts/preview (adica in ce limba e textul demo al vocii)."""
     entry = _catalog_entry(resolve_voice_id(voice_id))
     if entry:
         return _demo_locale_for_entry(entry)
@@ -164,8 +172,9 @@ def preview_locale_for_voice(voice_id: str) -> str:
 
 
 def tts_config_from_voice_id(voice_id: str | None) -> TtsConfig:
-    """Construiesc TtsConfig din alegerea UI: Edge, gTTS sau config din mediu daca lipseste."""
+    """Transform alegerea de voce din UI intr-un TtsConfig concret pentru pipeline."""
     vid = (voice_id or "").strip()
+    # Daca UI-ul n-a trimis nicio voce, folosesc configuratia din variabilele de mediu.
     if not vid:
         try:
             from long_text_pipeline import _tts_config_from_env
@@ -174,8 +183,10 @@ def tts_config_from_voice_id(voice_id: str | None) -> TtsConfig:
         return _tts_config_from_env()
     resolved = resolve_voice_id(vid)
     entry = _catalog_entry(resolved)
+    # Daca vocea aleasa e gTTS, config-ul foloseste motorul gtts (fara fallback).
     if entry and entry.get("engine") == "gtts":
         return TtsConfig(engine="gtts", allow_fallback=False)
+    # Altfel e o voce Edge: pun motorul edge cu vocea respectiva.
     return TtsConfig(
         engine="edge",
         edge_voice=resolved,

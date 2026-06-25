@@ -82,26 +82,29 @@ export default function ListaRedarePage() {
         [t],
     );
 
-    /* --- Stare: randuri playlist, modal URL, drag, batch --- */
-    const [items, setItems] = useState<PlaylistItem[]>([]);
-    const [urlInput, setUrlInput] = useState("");
-    const [urlModalOpen, setUrlModalOpen] = useState(false);
-    const [dragId, setDragId] = useState<string | null>(null);
-    const [guestLockedMsg, setGuestLockedMsg] = useState<string | null>(null);
-    const [ttsVoice, setTtsVoice] = useState(() => getStoredTtsVoice());
-    const [combinedMode, setCombinedMode] = useState(false);
-    const [combinedTitle, setCombinedTitle] = useState("");
-    const [combinedTitleTouched, setCombinedTitleTouched] = useState(false);
-    const isGuest = isGuestSession();
-    const genJob = useGenerationJob();
+    // Stare pentru randurile din coada, modalul de URL, drag-and-drop si modul de generare in lot (batch).
+    const [items, setItems] = useState<PlaylistItem[]>([]);     // randurile din playlist
+    const [urlInput, setUrlInput] = useState("");               // textul din input-ul de URL
+    const [urlModalOpen, setUrlModalOpen] = useState(false);    // e deschis modalul de adaugare link?
+    const [dragId, setDragId] = useState<string | null>(null);  // id-ul randului care e tras acum (drag)
+    const [guestLockedMsg, setGuestLockedMsg] = useState<string | null>(null);  // mesaj cand un oaspete incearca ceva blocat
+    const [ttsVoice, setTtsVoice] = useState(() => getStoredTtsVoice());  // vocea aleasa (initial cea salvata)
+    const [combinedMode, setCombinedMode] = useState(false);    // false = cate o carte per sursa; true = totul intr-una singura
+    const [combinedTitle, setCombinedTitle] = useState("");     // titlul cartii combinate
+    const [combinedTitleTouched, setCombinedTitleTouched] = useState(false);  // a editat userul titlul manual? (ca sa nu-l mai suprascriu automat)
+    const isGuest = isGuestSession();  // sesiune de oaspete? (lista de redare e blocata pentru ei)
+    const genJob = useGenerationJob();  // ma abonez la jobul global de generare
+    // Ruleaza chiar acum un lot din lista de redare (separat sau combinat)?
     const batchRunning =
         genJob.busy &&
         (genJob.kind === "playlist-separate" || genJob.kind === "playlist-combined");
-    const docRef = useRef<HTMLInputElement>(null);
-    const imgRef = useRef<HTMLInputElement>(null);
+    const docRef = useRef<HTMLInputElement>(null);  // input ascuns pentru documente
+    const imgRef = useRef<HTMLInputElement>(null);  // input ascuns pentru imagini
 
+    // Inregistrez callback-uri prin care jobul global imi spune cand se schimba statusul unui rand sau cand se anuleaza lotul.
     useEffect(() => {
         registerPlaylistBatchCallbacks({
+            // Cand un rand isi schimba statusul (ex. "generare" -> "gata"), il actualizez in lista.
             onItemStatus: (id, status, errorMessage) => {
                 setItems((prev) =>
                     prev.map((it) =>
@@ -109,6 +112,7 @@ export default function ListaRedarePage() {
                     ),
                 );
             },
+            // La anulare, readuc la "pregatit" randurile care erau in lucru, ca sa le pot relua.
             onBatchCancelled: () => {
                 setItems((prev) =>
                     prev.map((it) =>
@@ -119,6 +123,7 @@ export default function ListaRedarePage() {
                 );
             },
         });
+        // La demontare scot callback-urile ca sa nu ramana legate de o pagina care nu mai exista.
         return () => registerPlaylistBatchCallbacks(null);
     }, []);
 
@@ -132,6 +137,7 @@ export default function ListaRedarePage() {
         [items, t],
     );
 
+    // Cat timp suntem in modul combinat si userul n-a scris manual titlul, il completez automat cu sugestia.
     useEffect(() => {
         if (!combinedMode || combinedTitleTouched) return;
         setCombinedTitle(suggestedCombinedTitle);
@@ -142,14 +148,16 @@ export default function ListaRedarePage() {
     }, [t]);
 
     const cancelBatch = useCallback(async () => {
+        // Cer confirmare inainte sa opresc lotul, ca sa nu se intample din greseala.
         const ok = await confirmDialog({ message: t("gen.cancelConfirm"), title: t("gen.cancelGeneration") });
         if (!ok) return;
         await cancelActiveGenerationJob();
     }, [t]);
 
-    /* --- Handlere: adaugare surse (URL, fisier) --- */
-    /** Valideaza URL si adauga un rand nou in coada. */
+    // De aici incep handlerele de adaugare a surselor (link sau fisier) in coada.
+    /** Validez URL-ul si adaug un rand nou in coada. */
     const addUrl = () => {
+        // Oaspetii nu pot folosi lista de redare.
         if (isGuest) {
             showGuestSourceLocked();
             return;
@@ -167,6 +175,7 @@ export default function ListaRedarePage() {
             showToast(t("playlist.invalidUrl"), "error");
             return;
         }
+        // Adaug randul cu eticheta scurtata (daca link-ul e prea lung) si statusul initial "pregatit".
         setItems((prev) => [
             ...prev,
             {
@@ -203,7 +212,7 @@ export default function ListaRedarePage() {
         };
     }, [t]);
 
-    /** Adauga fisier in lista, extrage text si actualizeaza statusul randului. */
+    /** Adaug fisierul in lista cu status "extragere", apoi ii extrag textul si actualizez randul cand e gata. */
     const onPickFile = async (file: File | undefined) => {
         if (!file) return;
         if (isGuest) {
@@ -211,6 +220,7 @@ export default function ListaRedarePage() {
             return;
         }
         setGuestLockedMsg(null);
+        // Adaug randul imediat (cu status "extragere") ca utilizatorul sa vada ca lucrez la el.
         const id = newId();
         setItems((prev) => [
             ...prev,
@@ -247,15 +257,18 @@ export default function ListaRedarePage() {
         }
     };
 
-    /* --- Handlere: reordonare, stergere rand --- */
+    // De aici incep handlerele de reordonare si stergere a randurilor.
     const removeItem = (id: string) => {
+        // Scot randul cu id-ul dat din lista.
         setItems((prev) => prev.filter((x) => x.id !== id));
     };
 
     const moveItem = (id: string, dir: -1 | 1) => {
+        // Mut randul cu o pozitie in sus (dir -1) sau in jos (dir +1), interschimband cu vecinul.
         setItems((prev) => {
             const i = prev.findIndex((x) => x.id === id);
             const j = i + dir;
+            // Daca as iesi din lista (primul rand in sus / ultimul in jos), nu fac nimic.
             if (i < 0 || j < 0 || j >= prev.length) return prev;
             const next = [...prev];
             [next[i], next[j]] = [next[j], next[i]];
@@ -269,10 +282,12 @@ export default function ListaRedarePage() {
         e.preventDefault();
     };
     const onDropRow = (targetId: string) => {
+        // Daca n-am nimic in mana sau dau drumul peste acelasi rand, doar resetez.
         if (!dragId || dragId === targetId) {
             setDragId(null);
             return;
         }
+        // Scot randul tras din pozitia lui si il insert pe pozitia randului-tinta.
         setItems((prev) => {
             const i = prev.findIndex((x) => x.id === dragId);
             const j = prev.findIndex((x) => x.id === targetId);
@@ -286,13 +301,16 @@ export default function ListaRedarePage() {
     };
 
     const runBatch = async () => {
+        // Iau in lucru doar randurile pregatite sau cele care au dat eroare (ca sa le reincerc).
         const queue = items.filter((it) => it.status === "pregatit" || it.status === "eroare");
         if (queue.length === 0) {
             showToast(t("playlist.nothingToGenerate"), "error");
             return;
         }
+        // guardGenerationStart blocheaza daca ruleaza deja altceva.
         if (!guardGenerationStart(t)) return;
 
+        // In modul combinat fac o singura carte (cu titlu obligatoriu); altfel cate o carte per sursa.
         if (combinedMode) {
             const title = combinedTitle.trim();
             if (!title) {
@@ -305,7 +323,9 @@ export default function ListaRedarePage() {
         }
     };
 
+    // Cate randuri sunt gata de generat (folosit si pe butonul de generare).
     const readyCount = items.filter((it) => it.status === "pregatit" || it.status === "eroare").length;
+    // Pot genera daca am randuri pregatite, (in mod combinat) am titlu si nu ruleaza deja altceva.
     const canGenerate =
         readyCount > 0 &&
         (!combinedMode || combinedTitle.trim().length > 0) &&

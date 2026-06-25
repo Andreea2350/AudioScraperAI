@@ -1,16 +1,21 @@
 "use client";
 
-/* Modal global de confirmare (confirmDialog) in stilul site-ului. */
+/**
+ * Modalul global de confirmare. Il montez o singura data in layout; orice apel confirmDialog(...) din aplicatie
+ * ajunge aici si afiseaza dialogul in stilul site-ului (in loc de urat-ul window.confirm).
+ */
 import { useEffect, useState } from "react";
 import { registerConfirmHandler, type ConfirmOptions } from "@/lib/confirm";
 import { useI18n } from "@/lib/i18n";
 
+// O confirmare in asteptare = optiunile dialogului plus functia "resolve" a promisiunii pe care o astepta apelantul.
 type Pending = ConfirmOptions & { resolve: (value: boolean) => void };
 
 export function ConfirmHost() {
     const { t } = useI18n();
-    const [pending, setPending] = useState<Pending | null>(null);
+    const [pending, setPending] = useState<Pending | null>(null);  // dialogul afisat acum (null = niciunul)
 
+    // Ma inregistrez ca "handler" pentru confirmDialog: cand cineva cere o confirmare, salvez optiunile si tin promisiunea deschisa pana raspunde userul.
     useEffect(() => {
         registerConfirmHandler(
             (opts) => new Promise<boolean>((resolve) => setPending({ ...opts, resolve })),
@@ -18,13 +23,16 @@ export function ConfirmHost() {
         return () => registerConfirmHandler(null);
     }, []);
 
+    // Daca nu e nimic de confirmat, nu randez nimic.
     if (!pending) return null;
 
+    // Inchid dialogul si rezolv promisiunea cu raspunsul (true = a confirmat, false = a anulat).
     const close = (value: boolean) => {
         pending.resolve(value);
         setPending(null);
     };
 
+    // Implicit tratez confirmarea ca "distructiva" (rosie), pentru ca cele mai multe sunt stergeri.
     const destructive = pending.destructive ?? true;
     const confirmBg = destructive
         ? "linear-gradient(135deg, #b3261e, #7f1d1d)"
