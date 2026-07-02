@@ -19,7 +19,7 @@ const lexend = Lexend({
 
 /** Metadata SEO pentru tab-ul browserului. */
 export const metadata: Metadata = {
-    title: "AudioScraperAI",
+    title: "Text2Book",
     description: "Cărți audio din text și web",
 };
 

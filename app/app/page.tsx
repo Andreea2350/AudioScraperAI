@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { API_BASE, authHeadersJson, clearAuthSession, fetchCarteRezumat, fetchCarteSegmente, fetchGuestCredits, GUEST_JOB_MAX_CHARS, GUEST_PREVIEW_CHARS, isGuestSession, segmentsFromCarteDb, touchCarteAccess, type DocumentExtractMeta, type GenerationSegment, type GuestCreditsInfo, type PlaylistMode } from "@/lib/api";
+import { getApiBase, authHeadersJson, clearAuthSession, fetchCarteRezumat, fetchCarteSegmente, fetchGuestCredits, GUEST_JOB_MAX_CHARS, GUEST_PREVIEW_CHARS, isGuestSession, segmentsFromCarteDb, touchCarteAccess, type DocumentExtractMeta, type GenerationSegment, type GuestCreditsInfo, type PlaylistMode } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { showToast } from "@/lib/toast";
 import { confirmDialog } from "@/lib/confirm";
@@ -264,7 +264,7 @@ export default function Home() {
     useEffect(() => {
         const fetchIstoric = async () => {
             try {
-                const response = await fetch(`${API_BASE}/istoric`, { headers: authHeadersJson() });
+                const response = await fetch(`${getApiBase()}/istoric`, { headers: authHeadersJson() });
                 if (response.status === 401) {
                     clearAuthSession();
                     router.replace("/login");
@@ -487,7 +487,7 @@ export default function Home() {
             return;
         }
         try {
-            await fetch(`${API_BASE}/redenumeste/${carteDeRedenumit.id}`, {
+            await fetch(`${getApiBase()}/redenumeste/${carteDeRedenumit.id}`, {
                 method: "PUT",
                 headers: authHeadersJson(),
                 body: JSON.stringify({ titlu_nou: titluNou }),
@@ -518,7 +518,7 @@ export default function Home() {
             return;
         }
         try {
-            await fetch(`${API_BASE}/sterge/${carteDeSters}`, {
+            await fetch(`${getApiBase()}/sterge/${carteDeSters}`, {
                 method: "DELETE",
                 headers: authHeadersJson(),
             });

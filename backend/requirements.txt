@@ -16,3 +16,4 @@ pypdf
 python-docx
 ebooklib
 Pillow
+langdetect

@@ -509,11 +509,11 @@ def _upload_mp3_bytes(nume_fisier: str, blob: bytes) -> str:
     return get_supabase().storage.from_("audio-books").get_public_url(nume_fisier)
 
 
-def _incarca_segment_mp3(seg: TtsSegmentResult, prefix: str) -> str:
-    # Citesc fisierul de segment de pe disc si il urc cu un nume care include indexul segmentului.
+def _incarca_segment_mp3(seg: TtsSegmentResult, prefix: str, segment_index: int) -> str:
+    # Citesc fisierul de segment de pe disc; numele foloseste indexul global (nu seg.index din capitol).
     with open(seg.mp3_path, "rb") as f:
         blob = f.read()
-    nume = f"{prefix}_seg_{seg.index}.mp3"
+    nume = f"{prefix}_seg_{segment_index}.mp3"
     return _upload_mp3_bytes(nume, blob)
 
 
@@ -689,10 +689,10 @@ def _ruleaza_generare_text(
             job.track_upload(url)
         return url
 
-    def upload_segment_tracked(seg: TtsSegmentResult, prefix: str) -> str:
-        # La fel, dar pentru segmente.
+    def upload_segment_tracked(seg: TtsSegmentResult, prefix: str, segment_index: int) -> str:
+        # La fel, dar pentru segmente (segment_index = pozitia globala in playlist).
         check_cancel()
-        url = _incarca_segment_mp3(seg, prefix)
+        url = _incarca_segment_mp3(seg, prefix, segment_index)
         if job is not None:
             job.track_upload(url)
         return url

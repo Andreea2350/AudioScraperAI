@@ -103,7 +103,7 @@ def run_audio_generation(
     tts_config=None,
     emit: EmitFn,
     upload_mp3: Callable[[str, bytes], str],
-    upload_segment: Callable[[TtsSegmentResult, str], str],
+    upload_segment: Callable[[TtsSegmentResult, str, int], str],
     insert_carte: Callable[[dict], int | None],
     save_segments: Callable[[int, list[dict]], None],
     verify_guest_credits: Callable[[int], None],
@@ -253,7 +253,7 @@ def run_audio_generation(
                 # Prima emitere: trimit segmentul FARA link audio, ca UI-ul sa-l afiseze imediat (optimist).
                 emit({"type": "segment", **seg_resp})
                 # Acum urc efectiv segmentul in Supabase si primesc link-ul.
-                link = upload_segment(seg, prefix)
+                link = upload_segment(seg, prefix, idx)
                 # Pregatesc randul exact cum il vreau in tabelul carti_segmente.
                 row = {
                     "segment_index": idx,

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from backend.main import app as backend_app
 
 # Creez aplicatia wrapper ceruta de Vercel
-app = FastAPI(title="AudioScraperAI Vercel API")
+app = FastAPI(title="Text2Book Vercel API")
 
 # Atasez backend-ul la /api: request-urile site.ro/api/* ajung in backend.main
 app.mount("/api", backend_app)

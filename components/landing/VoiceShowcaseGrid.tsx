@@ -33,11 +33,17 @@ export function VoiceShowcaseGrid() {
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
-        fetchTtsVoices(locale).then((list) => {
-            if (cancelled) return;
-            setVoices(list);
-            setLoading(false);
-        });
+        fetchTtsVoices(locale)
+            .then((list) => {
+                if (cancelled) return;
+                setVoices(list);
+                setLoading(false);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setVoices([]);
+                setLoading(false);
+            });
         return () => {
             cancelled = true;
         };

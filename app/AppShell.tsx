@@ -7,7 +7,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { API_BASE, authHeadersMultipart, clearAuthSession, isGuestSession } from "@/lib/api";
+import { getApiBase, authHeadersMultipart, clearAuthSession, isGuestSession } from "@/lib/api";
 import { DOCUMENT_FILE_ACCEPT, IMAGE_FILE_ACCEPT, isImageUploadFile } from "@/lib/fileUploadAccept";
 import { useI18n } from "@/lib/i18n";
 import { LibraryNewFolderButton } from "@/components/LibraryNewFolderButton";
@@ -18,6 +18,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { GenerationProgressBar } from "@/components/GenerationProgressBar";
 import { GenerationLeaveGuard } from "@/components/GenerationLeaveGuard";
+import { BrandLogo } from "@/components/BrandLogo";
 import { useGenerationJob } from "@/lib/generationJob";
 import { LIBRARY_BOOK_VIEW_EVENT } from "@/lib/libraryUiStorage";
 import { APP_HOME_PATH, isAppHomePath, isPublicPath, LANDING_PATH } from "@/lib/routes";
@@ -238,7 +239,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             // Trimit fisierul ca multipart/form-data catre endpoint-ul de extragere.
             const fd = new FormData();
             fd.append("file", file);
-            const res = await fetch(`${API_BASE}/extrage_fisier`, {
+            const res = await fetch(`${getApiBase()}/extrage_fisier`, {
                 method: "POST",
                 headers: authHeadersMultipart(),
                 body: fd,
@@ -378,9 +379,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         aria-label={t("shell.library")}
                     >
                         <div className="text-2xl font-extrabold tracking-wider text-white">
-                            AudioScraper<span style={{ color: "var(--sidebar-brand-accent)" }}>AI</span>
+                            <BrandLogo />
                         </div>
-                        <div className="mt-0.5 text-[11px] font-medium" style={{ color: "var(--sidebar-section)" }}>
+                        <div className="mt-0.5 text-[11px] font-semibold" style={{ color: "var(--sidebar-brand-accent)" }}>
                             {t("shell.tagline")}
                         </div>
                     </button>

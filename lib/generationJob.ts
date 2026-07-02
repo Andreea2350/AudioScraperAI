@@ -8,7 +8,7 @@
  */
 import { useSyncExternalStore } from "react";
 import {
-    API_BASE,
+    getApiBase,
     authHeadersJson,
     cancelGenerationJob,
     isAbortError,
@@ -399,7 +399,7 @@ export async function runPlaylistSeparate(
         try {
             if (q.sourceKind === "url" && q.url) {
                 // Sursa de tip URL: cer backend-ului sa o extraga si sa genereze.
-                const res = await fetch(`${API_BASE}/extrage`, {
+                const res = await fetch(`${getApiBase()}/extrage`, {
                     method: "POST",
                     headers: authHeadersJson(),
                     body: JSON.stringify({ url: q.url, force_regenerate: false, tts_voice: ttsVoice }),
@@ -415,7 +415,7 @@ export async function runPlaylistSeparate(
                 }
             } else if (q.sourceKind === "document" && q.titlu && q.extractedText) {
                 // Sursa de tip document: am deja textul extras, trimit direct la generare.
-                const res = await fetch(`${API_BASE}/genereaza_text`, {
+                const res = await fetch(`${getApiBase()}/genereaza_text`, {
                     method: "POST",
                     headers: authHeadersJson(),
                     body: JSON.stringify({
@@ -496,7 +496,7 @@ export async function runPlaylistCombined(
             // URL: extrag doar textul (fara audio inca).
             notifyItem(q.id, "extragere");
             try {
-                const res = await fetch(`${API_BASE}/extrage_url_text`, {
+                const res = await fetch(`${getApiBase()}/extrage_url_text`, {
                     method: "POST",
                     headers: authHeadersJson(),
                     body: JSON.stringify({ url: q.url }),
@@ -558,7 +558,7 @@ export async function runPlaylistCombined(
 
     // Etapa 2: trimit textul combinat la generare (cu curatare Gemini activata).
     try {
-        const res = await fetch(`${API_BASE}/genereaza_text`, {
+        const res = await fetch(`${getApiBase()}/genereaza_text`, {
             method: "POST",
             headers: authHeadersJson(),
             body: JSON.stringify({

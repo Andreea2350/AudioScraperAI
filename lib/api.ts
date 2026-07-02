@@ -21,8 +21,10 @@ function resolveApiBase(): string {
     return "/api";
 }
 
-// Adresa de baza o calculez o singura data si o refolosesc peste tot.
-export const API_BASE = resolveApiBase();
+// Rezolv adresa la momentul cererii (nu la import), ca in browser sa nu ramana "/api" din SSR.
+export function getApiBase(): string {
+    return resolveApiBase();
+}
 
 /** Scot token-ul JWT din localStorage (suport si pentru formatul vechi folosit de Supabase). */
 function getActiveSessionToken(): string | null {
@@ -224,7 +226,7 @@ export async function streamGenereazaText(
     onEvent: (evt: GenerationStreamEvent) => void,
     signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
-    const res = await fetch(`${API_BASE}/genereaza_text/stream`, {
+    const res = await fetch(`${getApiBase()}/genereaza_text/stream`, {
         method: "POST",
         headers: authHeadersJson(),
         // Pun curata_cu_gemini: false ca default, dar body-ul primit il poate suprascrie.
@@ -240,7 +242,7 @@ export async function streamExtrageUrl(
     onEvent: (evt: GenerationStreamEvent) => void,
     signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
-    const res = await fetch(`${API_BASE}/extrage/stream`, {
+    const res = await fetch(`${getApiBase()}/extrage/stream`, {
         method: "POST",
         headers: authHeadersJson(),
         body: JSON.stringify(body),
@@ -252,7 +254,7 @@ export async function streamExtrageUrl(
 /** Cer serverului sa anuleze un job de generare (sterge fisierele partiale, fara sa salveze cartea). */
 export async function cancelGenerationJob(jobId: string): Promise<void> {
     if (!jobId) return;
-    await fetch(`${API_BASE}/generare/cancel`, {
+    await fetch(`${getApiBase()}/generare/cancel`, {
         method: "POST",
         headers: authHeadersJson(),
         body: JSON.stringify({ job_id: jobId }),
@@ -273,7 +275,7 @@ export async function streamGenereazaFisier(
     // Trimit boolean-ul ca string pentru ca FormData accepta doar text/fisiere.
     fd.append("curata_cu_gemini", String(Boolean(opts.curata_cu_gemini)));
     if (opts.tts_voice) fd.append("tts_voice", opts.tts_voice);
-    const res = await fetch(`${API_BASE}/genereaza_fisier/stream`, {
+    const res = await fetch(`${getApiBase()}/genereaza_fisier/stream`, {
         method: "POST",
         headers: authHeadersMultipart(),  // fara Content-Type, ca browserul sa puna boundary-ul corect
         body: fd,
@@ -294,7 +296,7 @@ export type CarteSegment = {
 
 /** Incarc segmentele deja salvate ale unei carti din biblioteca (ca sa pot reda playlistul fara regenerare). */
 export async function fetchCarteSegmente(carteId: number): Promise<CarteSegment[]> {
-    const res = await fetch(`${API_BASE}/carti/${carteId}/segmente`, { headers: authHeadersJson() });
+    const res = await fetch(`${getApiBase()}/carti/${carteId}/segmente`, { headers: authHeadersJson() });
     // Daca ceva nu merge, intorc lista goala in loc sa stric pagina.
     if (!res.ok) return [];
     const data = (await res.json()) as { data?: CarteSegment[] };
@@ -303,7 +305,7 @@ export async function fetchCarteSegmente(carteId: number): Promise<CarteSegment[
 
 /** Cer un rezumat AI pentru o carte (nu atinge audio-ul). Limba o detecteaza serverul din text. */
 export async function fetchCarteRezumat(carteId: number): Promise<string> {
-    const res = await fetch(`${API_BASE}/carti/${carteId}/rezumat`, {
+    const res = await fetch(`${getApiBase()}/carti/${carteId}/rezumat`, {
         method: "POST",
         headers: authHeadersJson(),
         body: JSON.stringify({}),
@@ -322,7 +324,7 @@ export async function fetchCarteRezumat(carteId: number): Promise<string> {
 
 /** Anunt serverul ca am deschis o carte, ca sa actualizeze ultima_accesare (folosit la sortarea bibliotecii). */
 export async function touchCarteAccess(carteId: number): Promise<string | null> {
-    const res = await fetch(`${API_BASE}/carti/${carteId}/acces`, {
+    const res = await fetch(`${getApiBase()}/carti/${carteId}/acces`, {
         method: "PATCH",
         headers: authHeadersJson(),
     });
@@ -377,7 +379,7 @@ export function setStoredGuestSessionId(id: string): void {
 // Iau de la server creditele oaspetelui curent; daca nu sunt oaspete, nu are sens, deci null.
 export async function fetchGuestCredits(): Promise<GuestCreditsInfo | null> {
     if (!isGuestSession()) return null;
-    const res = await fetch(`${API_BASE}/guest/credits`, { headers: authHeadersJson() });
+    const res = await fetch(`${getApiBase()}/guest/credits`, { headers: authHeadersJson() });
     if (!res.ok) return null;
     return (await res.json()) as GuestCreditsInfo;
 }
@@ -394,20 +396,43 @@ export type TtsVoiceOption = {
     sample_text: string;
 };
 
+function ttsVoicesApiBases(): string[] {
+    const primary = getApiBase();
+    if (typeof window !== "undefined" && primary.startsWith("http://127.0.0.1:8765")) {
+        return [primary, "/api"];
+    }
+    return [primary];
+}
+
 /** Incarc catalogul de voci pentru dropdown-ul de selectie, localizat. */
 export async function fetchTtsVoices(locale: string): Promise<TtsVoiceOption[]> {
     const loc = locale === "en" ? "en" : "ro";
-    const res = await fetch(`${API_BASE}/tts/voices?locale=${loc}`);
-    if (!res.ok) return [];
-    const data = (await res.json()) as { data?: TtsVoiceOption[] };
-    return data.data ?? [];
+    const path = `/tts/voices?locale=${loc}`;
+    const retryDelaysMs = [0, 1000, 2000];
+
+    for (const delayMs of retryDelaysMs) {
+        if (delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+        for (const base of ttsVoicesApiBases()) {
+            try {
+                const res = await fetch(`${base}${path}`);
+                if (!res.ok) continue;
+                const data = (await res.json()) as { data?: TtsVoiceOption[] };
+                return data.data ?? [];
+            } catch {
+                // Backend-ul poate inca porni; incerc urmatoarea baza sau retry.
+            }
+        }
+    }
+    return [];
 }
 
 /** Construiesc URL-ul catre MP3-ul scurt de previzualizare a unei voci (il pun direct intr-un <audio>). */
 export function ttsPreviewUrl(voiceId: string, locale: string): string {
     const loc = locale === "en" ? "en" : "ro";
     // Encodez id-ul vocii ca sa fie sigur in URL.
-    return `${API_BASE}/tts/preview?voice=${encodeURIComponent(voiceId)}&locale=${loc}`;
+    return `${getApiBase()}/tts/preview?voice=${encodeURIComponent(voiceId)}&locale=${loc}`;
 }
 
 // Citesc rolul utilizatorului salvat in localStorage (admin/user/guest).

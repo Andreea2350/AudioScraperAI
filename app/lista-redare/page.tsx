@@ -5,7 +5,7 @@
  * in ordinea randurilor. Drag-and-drop reordoneaza; fiecare rand are propriul status in UI.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API_BASE, authHeadersMultipart, isGuestSession } from "@/lib/api";
+import { getApiBase, authHeadersMultipart, isGuestSession } from "@/lib/api";
 import { DOCUMENT_FILE_ACCEPT, IMAGE_FILE_ACCEPT } from "@/lib/fileUploadAccept";
 import { useI18n } from "@/lib/i18n";
 import { showToast } from "@/lib/toast";
@@ -194,7 +194,7 @@ export default function ListaRedarePage() {
     const extractFile = useCallback(async (file: File) => {
         const fd = new FormData();
         fd.append("file", file);
-        const res = await fetch(`${API_BASE}/extrage_fisier`, {
+        const res = await fetch(`${getApiBase()}/extrage_fisier`, {
             method: "POST",
             headers: authHeadersMultipart(),
             body: fd,

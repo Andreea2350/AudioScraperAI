@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { BrandLogo } from "@/components/BrandLogo";
 import { VoiceShowcaseGrid } from "@/components/landing/VoiceShowcaseGrid";
 import {
     IconBook,
@@ -38,7 +39,7 @@ function LandingHeader() {
             }}
         >
             <Link href="/" className="text-xl font-extrabold tracking-wide text-white">
-                AudioScraper<span style={{ color: "#B0E4CC" }}>AI</span>
+                <BrandLogo />
             </Link>
             <div className="flex items-center gap-2 sm:gap-3">
                 <LanguageToggle onBrandBar />
