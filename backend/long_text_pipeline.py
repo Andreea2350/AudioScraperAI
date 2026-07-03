@@ -1165,10 +1165,100 @@ def synthesize_ro_to_mp3_path(text: str, tts_config=None) -> str:
     return out_path
 
 
+_FFMPEG_EXE_CACHE: str | None | bool = False
+
+
+def _resolve_ffmpeg_exe() -> str | None:
+    """Caut ffmpeg in PATH; daca lipseste (ex. Vercel), folosesc binarul din imageio-ffmpeg."""
+    global _FFMPEG_EXE_CACHE
+    if _FFMPEG_EXE_CACHE is not False:
+        return _FFMPEG_EXE_CACHE or None
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        try:
+            import imageio_ffmpeg
+
+            exe = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            exe = None
+    if exe and os.path.isfile(exe):
+        _FFMPEG_EXE_CACHE = exe
+    else:
+        _FFMPEG_EXE_CACHE = None
+    return _FFMPEG_EXE_CACHE
+
+
+def _duration_via_ffmpeg_probe(ffmpeg_exe: str, path: str) -> float | None:
+    """Durata MP3 parsata din stderr-ul lui ffmpeg -i (fallback cand ffprobe lipseste)."""
+    try:
+        sub_kw: dict = {"capture_output": True, "text": True, "timeout": 120}
+        if os.name == "nt":
+            sub_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+        r = subprocess.run(
+            [ffmpeg_exe, "-hide_banner", "-i", path, "-f", "null", "-"],
+            **sub_kw,
+        )
+        m = re.search(
+            r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",
+            (r.stderr or "") + (r.stdout or ""),
+        )
+        if not m:
+            return None
+        h, mi, s = m.groups()
+        return int(h) * 3600 + int(mi) * 60 + float(s)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+def _id3v2_header_size(data: bytes) -> int:
+    if len(data) < 10 or data[:3] != b"ID3":
+        return 0
+    tag_size = (
+        ((data[6] & 0x7F) << 21)
+        | ((data[7] & 0x7F) << 14)
+        | ((data[8] & 0x7F) << 7)
+        | (data[9] & 0x7F)
+    )
+    return 10 + tag_size
+
+
+def _mp3_bytes_for_concat(path: str, *, first: bool) -> bytes:
+    """Pregatesc payload-ul MP3 pentru lipire binara (fara re-encode)."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if not data:
+        raise RuntimeError(f"Segment MP3 gol: {path}")
+    if first:
+        if len(data) >= 128 and data[-128:-125] == b"TAG":
+            data = data[:-128]
+        return data
+    data = data[_id3v2_header_size(data) :]
+    if len(data) >= 128 and data[-128:-125] == b"TAG":
+        data = data[:-128]
+    if not data:
+        raise RuntimeError(f"Segment MP3 invalid dupa curatare tag-uri: {path}")
+    return data
+
+
+def _concat_mp3_binary_append(paths: list[str], out_path: str) -> None:
+    """Lipire binara a segmentelor MP3 (acelasi motor TTS). Nu necesita ffmpeg."""
+    try:
+        if os.path.isfile(out_path):
+            os.remove(out_path)
+    except OSError:
+        pass
+    with open(out_path, "wb") as out:
+        for i, p in enumerate(paths):
+            out.write(_mp3_bytes_for_concat(p, first=(i == 0)))
+
+
 def _ffprobe_duration_sec(path: str) -> float | None:
     """Citesc durata fisierului cu ffprobe. Daca unealta nu e instalata, intorc None (nu e capital)."""
     exe = shutil.which("ffprobe")
     if not exe:
+        ffmpeg = _resolve_ffmpeg_exe()
+        if ffmpeg:
+            return _duration_via_ffmpeg_probe(ffmpeg, path)
         return None
     try:
         sub_kw: dict = {"capture_output": True, "text": True, "timeout": 120}
@@ -1225,7 +1315,7 @@ def _assert_mp3_final_valid(out_path: str, approx_source_chars: int) -> None:
 
 
 def _concat_mp3_files(paths: list[str], out_path: str) -> None:
-    """Lipesc mai multe MP3-uri. Intai incerc ffmpeg (rapid, fara re-encode); daca lipseste, folosesc pydub."""
+    """Lipesc mai multe MP3-uri: ffmpeg, apoi lipire binara, apoi pydub."""
     if not paths:
         raise RuntimeError("Nu există segmente MP3 de concatenat.")
     # Un singur fisier: doar il copiez.
@@ -1233,13 +1323,49 @@ def _concat_mp3_files(paths: list[str], out_path: str) -> None:
         shutil.copy2(paths[0], out_path)
         return
 
-    ffmpeg = shutil.which("ffmpeg")
+    errors: list[str] = []
+    ffmpeg = _resolve_ffmpeg_exe()
     if ffmpeg:
-        _concat_mp3_ffmpeg_demuxer(ffmpeg, paths, out_path)
-        return
+        try:
+            _concat_mp3_ffmpeg_demuxer(ffmpeg, paths, out_path)
+            if os.path.isfile(out_path) and os.path.getsize(out_path) >= MIN_FINAL_MP3_BYTES:
+                return
+            errors.append("ffmpeg: fisier final prea mic sau lipsa")
+        except RuntimeError as e:
+            errors.append(str(e))
+        try:
+            if os.path.isfile(out_path):
+                os.remove(out_path)
+        except OSError:
+            pass
 
-    # Fara ffmpeg, cad pe pydub (mai lent si mai lacom la RAM).
-    _concat_mp3_pydub_only(paths, out_path)
+    try:
+        _concat_mp3_binary_append(paths, out_path)
+        if (
+            os.path.isfile(out_path)
+            and os.path.getsize(out_path) >= MIN_FINAL_MP3_BYTES
+            and _este_fisier_mp3_valid(out_path)
+        ):
+            return
+        errors.append("binary: fisier final invalid")
+    except Exception as e:
+        errors.append(f"binary: {e}")
+    try:
+        if os.path.isfile(out_path):
+            os.remove(out_path)
+    except OSError:
+        pass
+
+    ffmpeg = _resolve_ffmpeg_exe()
+    if ffmpeg:
+        try:
+            _concat_mp3_pydub_only(paths, out_path, ffmpeg_exe=ffmpeg)
+            return
+        except RuntimeError as e:
+            errors.append(str(e))
+
+    detail = "; ".join(errors)[:800] if errors else "metode esuate"
+    raise RuntimeError(f"Nu s-au putut concatena segmentele MP3. Detalii: {detail}")
 
 
 def _concat_mp3_ffmpeg_demuxer(ffmpeg_exe: str, paths: list[str], out_path: str) -> None:
@@ -1305,14 +1431,21 @@ def _concat_mp3_ffmpeg_demuxer(ffmpeg_exe: str, paths: list[str], out_path: str)
             pass
 
 
-def _concat_mp3_pydub_only(paths: list[str], out_path: str) -> None:
-    """Plan B fara ffmpeg: incarc fiecare segment in pydub si exportez. Atentie, consuma mult RAM pe carti mari."""
+def _concat_mp3_pydub_only(paths: list[str], out_path: str, *, ffmpeg_exe: str | None = None) -> None:
+    """Ultimul fallback: pydub + ffmpeg (re-encode). Consuma mai mult RAM pe carti mari."""
     try:
         from pydub import AudioSegment
     except ImportError as e:
         raise RuntimeError(
-            "Lipsește ffmpeg în PATH și pydub. Instalează ffmpeg sau: pip install pydub"
+            "Lipsește pydub/audioop. Instalează: pip install pydub audioop-lts"
         ) from e
+
+    ffmpeg_exe = ffmpeg_exe or _resolve_ffmpeg_exe()
+    if ffmpeg_exe:
+        AudioSegment.converter = ffmpeg_exe
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe:
+            AudioSegment.ffprobe = ffprobe
 
     try:
         combined = AudioSegment.empty()
@@ -1321,5 +1454,5 @@ def _concat_mp3_pydub_only(paths: list[str], out_path: str) -> None:
         combined.export(out_path, format="mp3")
     except Exception as e:
         raise RuntimeError(
-            "Concatenare pydub eșuată (cărți lungi: folosește ffmpeg în PATH). Detalii: " + str(e)
+            "Concatenare pydub eșuată. Detalii: " + str(e)
         ) from e
