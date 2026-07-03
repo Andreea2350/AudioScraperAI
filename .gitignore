@@ -10,9 +10,11 @@ frontend/CLAUDE.md
 
 .idea/
 
-#Fisiere audio
+#Fisiere audio (exceptie: ghidul de bun venit din public/)
 *.mp3
 *.wav
+!public/welcome-ro.mp3
+!public/welcome-en.mp3
 .vercel
 node_modules
 .next
